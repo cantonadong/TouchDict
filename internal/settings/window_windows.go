@@ -2,7 +2,15 @@
 
 package settings
 
-import "github.com/lxn/walk"
+import (
+	"github.com/lxn/walk"
+	"syscall"
+	"unsafe"
+)
+
+const geminiKeyURL = "https://aistudio.google.com/apikey"
+
+var shellExecute = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
 
 var GeminiModels = []string{
 	"gemini-flash-lite-latest",
@@ -25,12 +33,23 @@ func Edit(owner walk.Form, cfg *Config) bool {
 	l.SetMargins(walk.Margins{HNear: 18, VNear: 18, HFar: 18, VFar: 18})
 	l.SetSpacing(6)
 	_ = d.SetLayout(l)
-	label, _ := walk.NewTextLabel(d)
-	label.SetText("Gemini API Key")
-	_ = label.SetTextAlignment(walk.AlignHNearVNear)
+	labelRow, _ := walk.NewComposite(d)
+	labelLayout := walk.NewHBoxLayout()
+	labelLayout.SetMargins(walk.Margins{})
+	labelLayout.SetSpacing(0)
+	_ = labelRow.SetLayout(labelLayout)
+	apply, _ := walk.NewLinkLabel(labelRow)
+	_ = apply.SetText(`Gemini API Key  <a href="https://aistudio.google.com/apikey">申请</a>`)
+	_, _ = walk.NewHSpacer(labelRow)
+	apply.LinkActivated().Attach(func(link *walk.LinkLabelLink) {
+		if !openURL(uintptr(d.Handle()), link.URL()) {
+			walk.MsgBox(d, "无法打开网页", "请在浏览器中打开："+geminiKeyURL, walk.MsgBoxIconWarning)
+		}
+	})
 	key, _ := walk.NewLineEdit(d)
 	key.SetPasswordMode(true)
 	key.SetText(cfg.APIKey)
+	d.Starting().Attach(func() { _ = key.SetFocus() })
 	gap, _ := walk.NewVSpacer(d)
 	_ = gap.SetMinMaxSize(walk.Size{Height: 8}, walk.Size{Height: 8})
 	modelLabel, _ := walk.NewTextLabel(d)
@@ -89,4 +108,11 @@ func Edit(owner walk.Form, cfg *Config) bool {
 		d.Accept()
 	})
 	return d.Run() == walk.DlgCmdOK
+}
+
+func openURL(owner uintptr, target string) bool {
+	verb, _ := syscall.UTF16PtrFromString("open")
+	url, _ := syscall.UTF16PtrFromString(target)
+	r, _, _ := shellExecute.Call(owner, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(url)), 0, 0, 1)
+	return r > 32
 }
