@@ -1,0 +1,29 @@
+# TouchDict 开发日志
+
+## 2026-09-29
+
+- 已确认完整需求、架构和实施计划。
+- 环境：Windows amd64，Go 1.26.3。
+- 决策：采用 Go + 原生 Windows 控件；三指轻点由 Windows 映射为鼠标中键，另提供 `Ctrl+Alt+D`。
+- 安全：Gemini 密钥不写入源码或日志；设置保存时使用当前 Windows 用户的 DPAPI。
+- 用户明确要求不运行测试；仅执行格式化和编译。
+- 当前目录不是 Git 仓库，因此不能提交或推送。
+- 已完成：DPAPI 配置、托盘生命周期、中键/快捷键触发、剪贴板取词与恢复、Gemini 结构化查询、美式 SAPI 朗读、状态浮窗、设置页和独立预览模式。
+- 编译审查修复：适配 Walk/Go-OLE 实际 API；使用剪贴板序号识别“选区文本恰好等于旧剪贴板”的情况；按触发来源应用启用设置；把当前选区状态更新封送回 UI 线程。
+- 已知限制：当前版本通过复制选区跨应用取词。未实现 UI Automation 上下文扩展，因此无法可靠读取未选中的整句；Gemini 会根据用户实际选中的单词或短语解释含义。
+- 用户启动截图显示 `TTM_ADDTOOL failed`。根因是 Walk 依赖 Common Controls v6，但首版 EXE 未嵌入 Windows manifest；已添加应用清单资源，声明 Common Controls v6 与 Per-Monitor DPI。
+- 用户反馈 hover 单词后三指轻点无反应。根因是旧流程只复制已有选区；修复为先尝试现有选区，失败后自动双击鼠标下单词再复制，并在启用三指模式时消费中键事件以避免浏览器自动滚动。
+- 快捷键取词会等待 Ctrl/Alt 释放再复制，避免 `Ctrl+Alt+C` 取代预期的 `Ctrl+C`。
+- 使用 imagegen 生成蓝色词典触控图标，源文件为 `assets/touchdict.png`，并生成 `assets/touchdict.ico` 嵌入 EXE/托盘。
+- 用户的 Windows 三指轻点映射为左 Alt：新增对系统注入的独立左 Alt 短按监听，组合键及物理 Alt 不触发，防止干扰正常菜单快捷键。
+- Gemini 诊断：该密钥的 models 列表包含固定 2.5 模型，但实际 generateContent 返回 404；官方别名 `gemini-flash-lite-latest` 实测成功。已迁移默认/旧配置并在请求前回退。
+- 浮窗位移：结果状态改变会触发布局更新；现锁定 440×300 尺寸及首次显示锚点，取消强制抢焦点。
+- 托盘图标改为从嵌入资源组 ID 2 显式加载，不再使用可能受缓存影响的 `IconApplication()`。
+- Chrome hover 取词仍提示无单词：左 Alt 路径改为直接进入 hover 模式，使用 `SendInput` 原子发送双击、等待 Chromium 完成选区后再复制；其他触发仍优先保留已有多词选区。
+- 用户设备的触控板左 Alt 事件未带 injected 标志，故放宽为任意独立短按左 Alt；组合键仍不触发。
+- 浮窗边界改为 `MonitorFromPoint + GetMonitorInfo` 获取鼠标所在显示器工作区，使用像素坐标在单词附近放置并保持 12px 边距，支持副屏和负坐标。
+- 发音无反馈根因是 go-ole 将 COM 的正常 `S_FALSE` 返回包装为 error；现接受该状态并平衡释放，SAPI 失败时在浮窗状态栏显示具体提示。
+- 连续反馈显示 Walk 隐藏主窗口同时承担弹窗在双屏/DPI 下不可靠：显示改为 Win32 `SetWindowPos(HWND_TOPMOST)`，使用 `WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE`，结果更新不再重设坐标。
+- `Ctrl+Alt+D` 新增独立 `RegisterHotKey` 消息线程，保留键盘钩子作为注册失败回退。
+- 发音后端替换为隐藏 Windows PowerShell 进程调用系统 `SAPI.SpVoice`；文本经 Base64 传递，避免命令注入，每次朗读会停止上一进程。
+- 按用户要求完全移除鼠标中键钩子与取词入口，避免和浏览器自动滚动等常用功能冲突；三指映射左 Alt 为主触发，`Ctrl+Alt+D` 仅作兜底。

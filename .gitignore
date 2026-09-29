@@ -1,0 +1,6 @@
+/artifacts/
+/*.exe
+*.log
+gemini_key.txt
+*.tmp
+.superpowers/
