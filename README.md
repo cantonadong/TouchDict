@@ -1,5 +1,5 @@
 # TouchDict
-<img width="756" height="376" alt="image" src="https://github.com/user-attachments/assets/cfb301be-6be7-41d9-8c1e-20f72b6eeee1" />
+<img width="680" height="427" alt="image" src="https://github.com/user-attachments/assets/48633b97-3dd0-4904-aba0-8146eb52db6a" />
 
 Windows 11/10 轻量划词词典。选中英文后按 `Ctrl+Alt+D`，或在 Windows 触摸板设置中把“三指轻点”映射为“鼠标中键”。TouchDict 会调用 Gemini 返回上下文词义、词性、例句及翻译，并使用 Windows 美式英语语音朗读。
 
