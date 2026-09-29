@@ -26,9 +26,13 @@ const mciAlias = "touchdictspeech"
 var mciSendString = syscall.NewLazyDLL("winmm.dll").NewProc("mciSendStringW")
 
 type Service struct {
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	cmd    *exec.Cmd
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	ctx        context.Context
+	cmd        *exec.Cmd
+	done       chan struct{}
+	started    time.Time
+	generation uint64
 }
 
 func New() *Service                { return &Service{} }
@@ -47,11 +51,59 @@ func (s *Service) Speak(text string) error {
 	s.Stop()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
+	s.generation++
 	s.cancel = cancel
+	s.ctx = ctx
+	s.started = time.Now()
+	done := make(chan struct{})
+	s.done = done
 	s.mu.Unlock()
 	go func() {
+		defer close(done)
 		if err := s.speakOnline(ctx, text); err != nil && ctx.Err() == nil {
 			_ = s.speakSAPI(ctx, text)
+		}
+	}()
+	return nil
+}
+
+// SpeakAgain queues a second pronunciation without interrupting the current
+// one. Its start time is at least 1.5 seconds after the first pronunciation.
+func (s *Service) SpeakAgain(text string) error {
+	if s == nil {
+		return errors.New("发音服务不可用")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	s.mu.Lock()
+	done, ctx := s.done, s.ctx
+	started, generation := s.started, s.generation
+	s.mu.Unlock()
+	if done == nil || ctx == nil {
+		return s.Speak(text)
+	}
+	go func() {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return
+		}
+		if wait := time.Until(started.Add(1500 * time.Millisecond)); wait > 0 {
+			timer := time.NewTimer(wait)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return
+			}
+		}
+		s.mu.Lock()
+		current := s.generation == generation
+		s.mu.Unlock()
+		if current {
+			_ = s.Speak(text)
 		}
 	}()
 	return nil
@@ -124,6 +176,7 @@ func (s *Service) Stop() {
 	s.mu.Lock()
 	cancel, cmd := s.cancel, s.cmd
 	s.cancel, s.cmd = nil, nil
+	s.generation++
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()

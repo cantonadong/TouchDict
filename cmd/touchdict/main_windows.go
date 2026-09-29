@@ -52,6 +52,9 @@ func main() {
 	} else {
 		defer closer.Close()
 	}
+	if err := gemini.ConfigureCache(filepath.Dir(exe)); err != nil {
+		logger.Printf("cache init failed: %v", err)
+	}
 	events := make(chan trigger.Event, 2)
 	listener := trigger.New(events)
 	defer listener.Close()
@@ -73,8 +76,8 @@ func main() {
 				win.SetStatus(err.Error())
 			}
 		}
-	}, Retry: retry, Settings: func() {
-		if settings.Edit(win.MW, &cfg) {
+	}, Retry: retry, Hidden: speaker.Stop, Settings: func() {
+		if settings.Edit(nil, &cfg) {
 			logger.Print("settings updated")
 		}
 	}})
@@ -133,7 +136,7 @@ func main() {
 		getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 		win.ShowAt(walk.Point{X: int(p.X), Y: int(p.Y)}, preview.State("normal"))
 	})
-	addAction(notify, "设置", func() { _ = settings.Edit(win.MW, &cfg) })
+	addAction(notify, "设置", func() { _ = settings.Edit(nil, &cfg) })
 	addAction(notify, "退出", func() {
 		if cancel != nil {
 			cancel()
@@ -174,6 +177,9 @@ func main() {
 				continue
 			}
 			logger.Printf("capture succeeded source=%s", event.Source)
+			if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
+				_ = speaker.Speak(sel.Text)
+			}
 			if d, ok := gemini.Cached(sel); ok {
 				logger.Printf("lookup cache hit")
 				win.MW.Synchronize(func() {
@@ -181,8 +187,8 @@ func main() {
 					var p point
 					getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 					win.ShowAt(walk.Point{X: int(p.X), Y: int(p.Y)}, model.ViewState{Kind: model.ViewSuccess, Definition: d, Message: "缓存结果"})
-					if cfg.AutoSpeak {
-						_ = speaker.Speak(d.Term)
+					if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
+						_ = speaker.SpeakAgain(d.Term)
 					}
 				})
 				continue
@@ -221,11 +227,11 @@ func startLookup(win *popup.Window, cfg *settings.Config, speaker *speech.Servic
 				return
 			}
 			win.Update(model.ViewState{Kind: model.ViewSuccess, Definition: d})
-			if cfg.AutoSpeak && speaker.Available() {
-				if err := speaker.Speak(d.Term); err != nil {
+			if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) && speaker.Available() {
+				if err := speaker.SpeakAgain(d.Term); err != nil {
 					win.SetStatus(err.Error())
 				}
-			} else if cfg.AutoSpeak {
+			} else if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
 				win.SetStatus("Windows 美式英语语音不可用")
 			}
 		})
@@ -248,5 +254,8 @@ func singleInstance() bool {
 	name, _ := syscall.UTF16PtrFromString("Local\\TouchDict.SingleInstance")
 	h, _, _ := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
 	return h != 0 && syscall.GetLastError() != syscall.Errno(183)
+}
+func autoSpeakAllowed(enabled bool, text string) bool {
+	return enabled && len(strings.Fields(text)) <= 3
 }
 func init() { _ = fmt.Sprintf("") }

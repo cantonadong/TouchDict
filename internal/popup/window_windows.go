@@ -9,10 +9,17 @@ import (
 	"unsafe"
 )
 
+const (
+	cardWidth     = 440
+	cardMinHeight = 300
+	cardMaxHeight = 680
+)
+
 type Callbacks struct {
 	Speak    func()
 	Retry    func()
 	Settings func()
+	Hidden   func()
 }
 type Window struct {
 	MW                                               *walk.MainWindow
@@ -20,6 +27,7 @@ type Window struct {
 	speak, retry, pin, copyExample                   *walk.PushButton
 	anchor                                           walk.Point
 	anchored, pinned                                 bool
+	onHide                                           func()
 }
 type rect struct{ Left, Top, Right, Bottom int32 }
 type monitorInfo struct {
@@ -34,8 +42,8 @@ func New(c Callbacks) (*Window, error) {
 		return nil, e
 	}
 	mw.SetTitle("TouchDict")
-	mw.SetSize(walk.Size{Width: 440, Height: 300})
-	mw.SetMinMaxSize(walk.Size{Width: 440, Height: 300}, walk.Size{Width: 440, Height: 300})
+	mw.SetSize(walk.Size{Width: cardWidth, Height: cardMinHeight})
+	mw.SetMinMaxSize(walk.Size{Width: cardWidth, Height: cardMinHeight}, walk.Size{Width: cardWidth, Height: cardMaxHeight})
 	baseFont := shellFont(9, 0)
 	if baseFont != nil {
 		mw.SetFont(baseFont)
@@ -44,28 +52,33 @@ func New(c Callbacks) (*Window, error) {
 	l.SetMargins(walk.Margins{HNear: 20, VNear: 16, HFar: 20, VFar: 16})
 	l.SetSpacing(8)
 	_ = mw.SetLayout(l)
-	w := &Window{MW: mw}
+	w := &Window{MW: mw, onHide: c.Hidden}
 	termRow, _ := walk.NewComposite(mw)
 	termLayout := walk.NewHBoxLayout()
 	termLayout.SetMargins(walk.Margins{})
 	_ = termRow.SetLayout(termLayout)
 	w.term, _ = walk.NewTextLabel(termRow)
+	_ = w.term.SetMinMaxSize(walk.Size{}, walk.Size{Width: 400, Height: 16777215})
 	f := shellFont(18, walk.FontBold)
 	w.term.SetFont(f)
 	_, _ = walk.NewHSpacer(termRow)
 	w.pos, _ = walk.NewTextLabel(mw)
+	_ = w.pos.SetMinMaxSize(walk.Size{}, walk.Size{Width: 400, Height: 16777215})
 	pf := shellFont(10, walk.FontBold)
 	w.pos.SetFont(pf)
 	w.meaning, _ = walk.NewTextLabel(mw)
+	_ = w.meaning.SetMinMaxSize(walk.Size{}, walk.Size{Width: 400, Height: 16777215})
 	exampleRow, _ := walk.NewComposite(mw)
 	exampleLayout := walk.NewHBoxLayout()
 	exampleLayout.SetMargins(walk.Margins{})
 	_ = exampleRow.SetLayout(exampleLayout)
 	w.example, _ = walk.NewTextLabel(exampleRow)
+	_ = w.example.SetMinMaxSize(walk.Size{}, walk.Size{Width: 320, Height: 16777215})
 	ef := shellFont(11, 0)
 	w.example.SetFont(ef)
 	_, _ = walk.NewHSpacer(exampleRow)
 	w.copyExample, _ = walk.NewPushButton(exampleRow)
+	_ = w.copyExample.SetAlignment(walk.AlignHNearVNear)
 	w.copyExample.SetText("复制")
 	w.copyExample.Clicked().Attach(func() {
 		if text := w.example.Text(); text != "" {
@@ -75,7 +88,9 @@ func New(c Callbacks) (*Window, error) {
 		}
 	})
 	w.translation, _ = walk.NewTextLabel(mw)
+	_ = w.translation.SetMinMaxSize(walk.Size{}, walk.Size{Width: 400, Height: 16777215})
 	w.status, _ = walk.NewTextLabel(mw)
+	_ = w.status.SetMinMaxSize(walk.Size{}, walk.Size{Width: 400, Height: 16777215})
 	row, _ := walk.NewComposite(mw)
 	rl := walk.NewHBoxLayout()
 	rl.SetMargins(walk.Margins{})
@@ -107,6 +122,12 @@ func New(c Callbacks) (*Window, error) {
 		w.applyZOrder()
 	})
 	_, _ = walk.NewHSpacer(row)
+	mw.Deactivating().Attach(func() {
+		if !w.pinned {
+			w.Hide()
+		}
+	})
+	mw.SizeChanged().Attach(w.enforceWidth)
 	mw.Closing().Attach(func(cancel *bool, reason walk.CloseReason) { *cancel = true; w.Hide() })
 	w.Update(model.ViewState{Kind: model.ViewEmpty, Message: "将三指轻点映射为左 Alt，或按 Ctrl+Alt+D 查词。"})
 	return w, nil
@@ -118,7 +139,7 @@ func (w *Window) ShowAt(p walk.Point, s model.ViewState) {
 		w.captureAnchor()
 	}
 	w.Update(s)
-	sz := walk.Size{Width: w.MW.IntFrom96DPI(440), Height: w.MW.IntFrom96DPI(300)}
+	sz := walk.Size{Width: w.MW.IntFrom96DPI(cardWidth), Height: w.currentHeight()}
 	work := monitorWorkArea(p)
 	x, y := p.X+18, p.Y+20
 	if x+sz.Width > int(work.Right)-12 {
@@ -145,6 +166,29 @@ func (w *Window) captureAnchor() {
 		w.anchor = walk.Point{X: int(r.Left), Y: int(r.Top)}
 		w.anchored = true
 	}
+}
+func (w *Window) currentHeight() int {
+	minimum := w.MW.IntFrom96DPI(cardMinHeight)
+	maximum := w.MW.IntFrom96DPI(cardMaxHeight)
+	var r rect
+	if ok, _, _ := getWindowRect.Call(uintptr(w.MW.Handle()), uintptr(unsafe.Pointer(&r))); ok != 0 {
+		height := int(r.Bottom - r.Top)
+		if height >= minimum && height <= maximum {
+			return height
+		}
+	}
+	return minimum
+}
+func (w *Window) enforceWidth() {
+	var r rect
+	if ok, _, _ := getWindowRect.Call(uintptr(w.MW.Handle()), uintptr(unsafe.Pointer(&r))); ok == 0 {
+		return
+	}
+	target := w.MW.IntFrom96DPI(cardWidth)
+	if int(r.Right-r.Left) == target {
+		return
+	}
+	setWindowPos.Call(uintptr(w.MW.Handle()), 0, uintptr(r.Left), uintptr(r.Top), uintptr(target), uintptr(r.Bottom-r.Top), 0x0004|0x0010)
 }
 func (w *Window) Update(s model.ViewState) {
 	w.retry.SetVisible(false)
@@ -192,7 +236,7 @@ func (w *Window) Update(s model.ViewState) {
 }
 func (w *Window) applyAnchor() {
 	if w.anchored {
-		width, height := w.MW.IntFrom96DPI(440), w.MW.IntFrom96DPI(300)
+		width, height := w.MW.IntFrom96DPI(cardWidth), w.currentHeight()
 		insertAfter := ^uintptr(1)
 		if w.pinned {
 			insertAfter = ^uintptr(0)
@@ -220,8 +264,14 @@ func (w *Window) showNative() {
 	setForegroundWindow.Call(hwnd)
 }
 func (w *Window) SetStatus(message string) { w.status.SetText(message) }
-func (w *Window) Hide()                    { w.MW.Hide(); w.anchored = false }
-func (w *Window) Close()                   { w.MW.Dispose() }
+func (w *Window) Hide() {
+	w.MW.Hide()
+	w.anchored = false
+	if w.onHide != nil {
+		w.onHide()
+	}
+}
+func (w *Window) Close() { w.MW.Dispose() }
 
 var getSystemMetrics = syscall.NewLazyDLL("user32.dll").NewProc("GetSystemMetrics")
 var monitorFromPoint = syscall.NewLazyDLL("user32.dll").NewProc("MonitorFromPoint")

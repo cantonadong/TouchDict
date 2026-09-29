@@ -139,14 +139,7 @@ func (c *Client) Lookup(ctx context.Context, s model.Selection) (model.Definitio
 	if d.Kind != "sentence" && (d.PartOfSpeech == "" || d.ExampleEN == "" || d.ExampleZH == "") {
 		return d, errors.New("词典结果不完整，请重试")
 	}
-	resultCache.Lock()
-	resultCache.items[cacheKey] = d
-	resultCache.order = append(resultCache.order, cacheKey)
-	if len(resultCache.order) > 64 {
-		delete(resultCache.items, resultCache.order[0])
-		resultCache.order = resultCache.order[1:]
-	}
-	resultCache.Unlock()
+	storeCached(cacheKey, d)
 	return d, nil
 }
 
