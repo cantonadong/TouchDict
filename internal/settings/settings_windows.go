@@ -11,24 +11,26 @@ import (
 )
 
 type Config struct {
-	APIKey         string `json:"-"`
-	Model          string `json:"model"`
-	HotkeyEnabled  bool   `json:"hotkeyEnabled"`
-	MiddleEnabled  bool   `json:"middleEnabled"`
-	AltEnabled     bool   `json:"altEnabled"`
-	AutoSpeak      bool   `json:"autoSpeak"`
-	StartupEnabled bool   `json:"startupEnabled"`
-	configDir      string
+	APIKey          string `json:"-"`
+	Model           string `json:"model"`
+	HotkeyEnabled   bool   `json:"hotkeyEnabled"`
+	MiddleEnabled   bool   `json:"middleEnabled"`
+	AltEnabled      bool   `json:"altEnabled"`
+	AutoSpeak       bool   `json:"autoSpeak"`
+	StartupEnabled  bool   `json:"startupEnabled"`
+	ResultFontScale int    `json:"resultFontScale"`
+	configDir       string
 }
 
 type diskConfig struct {
-	Model          string `json:"model"`
-	HotkeyEnabled  bool   `json:"hotkeyEnabled"`
-	MiddleEnabled  bool   `json:"middleEnabled"`
-	AltEnabled     *bool  `json:"altEnabled,omitempty"`
-	AutoSpeak      bool   `json:"autoSpeak"`
-	StartupEnabled *bool  `json:"startupEnabled,omitempty"`
-	ProtectedKey   []byte `json:"protectedKey,omitempty"`
+	Model           string `json:"model"`
+	HotkeyEnabled   bool   `json:"hotkeyEnabled"`
+	MiddleEnabled   bool   `json:"middleEnabled"`
+	AltEnabled      *bool  `json:"altEnabled,omitempty"`
+	AutoSpeak       bool   `json:"autoSpeak"`
+	StartupEnabled  *bool  `json:"startupEnabled,omitempty"`
+	ResultFontScale *int   `json:"resultFontScale,omitempty"`
+	ProtectedKey    []byte `json:"protectedKey,omitempty"`
 }
 
 type dataBlob struct {
@@ -45,7 +47,7 @@ var (
 )
 
 func defaults() Config {
-	return Config{Model: "gemini-flash-lite-latest", HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true, StartupEnabled: true}
+	return Config{Model: "gemini-flash-lite-latest", HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true, StartupEnabled: true, ResultFontScale: 120}
 }
 
 func Load(exeDir string) (Config, error) {
@@ -71,6 +73,9 @@ func Load(exeDir string) (Config, error) {
 			}
 			if d.StartupEnabled != nil {
 				cfg.StartupEnabled = *d.StartupEnabled
+			}
+			if d.ResultFontScale != nil && *d.ResultFontScale >= 80 && *d.ResultFontScale <= 200 {
+				cfg.ResultFontScale = *d.ResultFontScale
 			}
 			if len(d.ProtectedKey) > 0 {
 				cfg.APIKey, _ = unprotect(d.ProtectedKey)
@@ -104,7 +109,8 @@ func (c Config) Save() error {
 	}
 	altEnabled := c.AltEnabled
 	startupEnabled := c.StartupEnabled
-	d := diskConfig{Model: c.Model, HotkeyEnabled: c.HotkeyEnabled, MiddleEnabled: c.MiddleEnabled, AltEnabled: &altEnabled, AutoSpeak: c.AutoSpeak, StartupEnabled: &startupEnabled, ProtectedKey: p}
+	fontScale := c.ResultFontScale
+	d := diskConfig{Model: c.Model, HotkeyEnabled: c.HotkeyEnabled, MiddleEnabled: c.MiddleEnabled, AltEnabled: &altEnabled, AutoSpeak: c.AutoSpeak, StartupEnabled: &startupEnabled, ResultFontScale: &fontScale, ProtectedKey: p}
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err

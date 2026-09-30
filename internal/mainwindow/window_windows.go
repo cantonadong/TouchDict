@@ -15,6 +15,8 @@ type Callbacks struct {
 	Lookup        func(string)
 	SelectHistory func(string)
 	Speak         func(string)
+	InitialScale  int
+	ZoomChanged   func(int)
 }
 
 type Window struct {
@@ -28,6 +30,8 @@ type Window struct {
 	callbacks                                        Callbacks
 	querying                                         bool
 	currentQuery                                     string
+	fontScale                                        int
+	resultFonts                                      []*walk.Font
 }
 
 func New(c Callbacks) (*Window, error) {
@@ -77,16 +81,13 @@ func New(c Callbacks) (*Window, error) {
 	bodyLayout.SetSpacing(14)
 	_ = body.SetLayout(bodyLayout)
 	w.history, _ = walk.NewListBox(body)
-	_ = w.history.SetMinMaxSize(walk.Size{Width: 230}, walk.Size{Width: 300, Height: 16777215})
+	_ = w.history.SetMinMaxSize(walk.Size{Width: 210}, walk.Size{Width: 210, Height: 16777215})
 	result, _ := walk.NewComposite(body)
 	resultLayout := walk.NewVBoxLayout()
 	resultLayout.SetMargins(walk.Margins{HNear: 12, VNear: 8, HFar: 12, VFar: 8})
 	resultLayout.SetSpacing(10)
 	_ = result.SetLayout(resultLayout)
 	w.term, _ = walk.NewTextLabel(result)
-	if f, e := walk.NewFont("Segoe UI", 20, walk.FontBold); e == nil {
-		w.term.SetFont(f)
-	}
 	w.pos, _ = walk.NewTextLabel(result)
 	w.meaning, _ = walk.NewTextLabel(result)
 	_ = w.meaning.SetMinMaxSize(walk.Size{}, walk.Size{Width: 16777215, Height: 16777215})
@@ -117,14 +118,45 @@ func New(c Callbacks) (*Window, error) {
 			c.SelectHistory(w.entries[i].Key)
 		}
 	})
+	if c.InitialScale < 80 || c.InitialScale > 200 {
+		c.InitialScale = 120
+	}
+	w.applyScale(c.InitialScale)
+	zoomKey := func(key walk.Key) {
+		if !walk.ControlDown() {
+			return
+		}
+		delta := 0
+		if key == walk.KeyAdd || key == walk.Key(0xBB) {
+			delta = 10
+		}
+		if key == walk.KeySubtract || key == walk.Key(0xBD) {
+			delta = -10
+		}
+		if delta != 0 {
+			w.applyScale(w.fontScale + delta)
+			if c.ZoomChanged != nil {
+				c.ZoomChanged(w.fontScale)
+			}
+		}
+	}
+	mw.KeyDown().Attach(zoomKey)
+	for _, widget := range []walk.Widget{w.input, w.history, w.queryButton, w.speak, w.retry, w.suggestions} {
+		widget.KeyDown().Attach(zoomKey)
+	}
 	mw.Closing().Attach(func(cancel *bool, reason walk.CloseReason) { *cancel = true; mw.Hide() })
 	w.Update(model.ViewState{Kind: model.ViewEmpty, Message: "在顶部输入英文开始查询"})
 	return w, nil
 }
 
-func (w *Window) Show()  { w.MW.Show(); _ = w.input.SetFocus() }
-func (w *Window) Hide()  { w.MW.Hide() }
-func (w *Window) Close() { w.MW.Dispose() }
+func (w *Window) Show() { w.MW.Show(); _ = w.input.SetFocus() }
+func (w *Window) Hide() { w.MW.Hide() }
+func (w *Window) Close() {
+	w.MW.Dispose()
+	for _, font := range w.resultFonts {
+		font.Dispose()
+	}
+}
 
 func (w *Window) SetHistory(entries []model.HistoryEntry) {
 	w.entries = append([]model.HistoryEntry(nil), entries...)
@@ -134,15 +166,46 @@ func (w *Window) SetHistory(entries []model.HistoryEntry) {
 		if labels[i] == "" {
 			labels[i] = entry.Definition.Term
 		}
-		if entry.Definition.MeaningZH != "" {
-			meaning := []rune(entry.Definition.MeaningZH)
-			if len(meaning) > 18 {
-				meaning = meaning[:18]
-			}
-			labels[i] += "  ·  " + string(meaning)
-		}
+		labels[i] = truncateHistory(labels[i], 25)
 	}
 	_ = w.history.SetModel(labels)
+}
+
+func truncateHistory(text string, limit int) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit-1]) + "…"
+}
+
+func (w *Window) applyScale(scale int) {
+	if scale < 80 {
+		scale = 80
+	}
+	if scale > 200 {
+		scale = 200
+	}
+	type fontTarget struct {
+		widget walk.Widget
+		size   int
+		style  walk.FontStyle
+	}
+	targets := []fontTarget{{w.term, 20, walk.FontBold}, {w.pos, 11, walk.FontBold}, {w.meaning, 13, 0}, {w.example, 12, 0}, {w.translation, 12, 0}, {w.suggestions, 12, 0}, {w.status, 10, 0}}
+	newFonts := make([]*walk.Font, 0, len(targets))
+	for _, target := range targets {
+		font, err := walk.NewFont("Segoe UI", target.size*scale/100, target.style)
+		if err == nil {
+			target.widget.SetFont(font)
+			newFonts = append(newFonts, font)
+		}
+	}
+	old := w.resultFonts
+	w.resultFonts = newFonts
+	w.fontScale = scale
+	for _, font := range old {
+		font.Dispose()
+	}
 }
 
 func (w *Window) SetInput(text string) { w.input.SetText(text) }

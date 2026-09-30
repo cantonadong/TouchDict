@@ -109,6 +109,13 @@ func main() {
 				mainWin.Update(model.ViewState{Kind: model.ViewError, Selection: text, Message: err.Error()})
 			}
 		},
+		InitialScale: cfg.ResultFontScale,
+		ZoomChanged: func(scale int) {
+			cfg.ResultFontScale = scale
+			if err := cfg.Save(); err != nil {
+				logger.Printf("font scale save failed")
+			}
+		},
 	})
 	if err != nil {
 		walk.MsgBox(nil, "TouchDict", err.Error(), walk.MsgBoxIconError)
