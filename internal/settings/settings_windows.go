@@ -11,22 +11,24 @@ import (
 )
 
 type Config struct {
-	APIKey        string `json:"-"`
-	Model         string `json:"model"`
-	HotkeyEnabled bool   `json:"hotkeyEnabled"`
-	MiddleEnabled bool   `json:"middleEnabled"`
-	AltEnabled    bool   `json:"altEnabled"`
-	AutoSpeak     bool   `json:"autoSpeak"`
-	configDir     string
+	APIKey         string `json:"-"`
+	Model          string `json:"model"`
+	HotkeyEnabled  bool   `json:"hotkeyEnabled"`
+	MiddleEnabled  bool   `json:"middleEnabled"`
+	AltEnabled     bool   `json:"altEnabled"`
+	AutoSpeak      bool   `json:"autoSpeak"`
+	StartupEnabled bool   `json:"startupEnabled"`
+	configDir      string
 }
 
 type diskConfig struct {
-	Model         string `json:"model"`
-	HotkeyEnabled bool   `json:"hotkeyEnabled"`
-	MiddleEnabled bool   `json:"middleEnabled"`
-	AltEnabled    *bool  `json:"altEnabled,omitempty"`
-	AutoSpeak     bool   `json:"autoSpeak"`
-	ProtectedKey  []byte `json:"protectedKey,omitempty"`
+	Model          string `json:"model"`
+	HotkeyEnabled  bool   `json:"hotkeyEnabled"`
+	MiddleEnabled  bool   `json:"middleEnabled"`
+	AltEnabled     *bool  `json:"altEnabled,omitempty"`
+	AutoSpeak      bool   `json:"autoSpeak"`
+	StartupEnabled *bool  `json:"startupEnabled,omitempty"`
+	ProtectedKey   []byte `json:"protectedKey,omitempty"`
 }
 
 type dataBlob struct {
@@ -43,7 +45,7 @@ var (
 )
 
 func defaults() Config {
-	return Config{Model: "gemini-flash-lite-latest", HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true}
+	return Config{Model: "gemini-flash-lite-latest", HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true, StartupEnabled: true}
 }
 
 func Load(exeDir string) (Config, error) {
@@ -66,6 +68,9 @@ func Load(exeDir string) (Config, error) {
 			cfg.HotkeyEnabled, cfg.MiddleEnabled, cfg.AutoSpeak = d.HotkeyEnabled, d.MiddleEnabled, d.AutoSpeak
 			if d.AltEnabled != nil {
 				cfg.AltEnabled = *d.AltEnabled
+			}
+			if d.StartupEnabled != nil {
+				cfg.StartupEnabled = *d.StartupEnabled
 			}
 			if len(d.ProtectedKey) > 0 {
 				cfg.APIKey, _ = unprotect(d.ProtectedKey)
@@ -98,7 +103,8 @@ func (c Config) Save() error {
 		return err
 	}
 	altEnabled := c.AltEnabled
-	d := diskConfig{Model: c.Model, HotkeyEnabled: c.HotkeyEnabled, MiddleEnabled: c.MiddleEnabled, AltEnabled: &altEnabled, AutoSpeak: c.AutoSpeak, ProtectedKey: p}
+	startupEnabled := c.StartupEnabled
+	d := diskConfig{Model: c.Model, HotkeyEnabled: c.HotkeyEnabled, MiddleEnabled: c.MiddleEnabled, AltEnabled: &altEnabled, AutoSpeak: c.AutoSpeak, StartupEnabled: &startupEnabled, ProtectedKey: p}
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err

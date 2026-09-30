@@ -18,9 +18,11 @@ import (
 	"github.com/lxn/walk"
 	"touchdict/internal/gemini"
 	"touchdict/internal/logging"
+	"touchdict/internal/mainwindow"
 	"touchdict/internal/model"
 	"touchdict/internal/popup"
 	"touchdict/internal/preview"
+	"touchdict/internal/query"
 	"touchdict/internal/selection"
 	"touchdict/internal/settings"
 	"touchdict/internal/speech"
@@ -41,7 +43,8 @@ func main() {
 		return
 	}
 	exe, _ := os.Executable()
-	cfg, err := settings.Load(filepath.Dir(exe))
+	exeDir := filepath.Dir(exe)
+	cfg, err := settings.Load(exeDir)
 	if err != nil {
 		walk.MsgBox(nil, "TouchDict", err.Error(), walk.MsgBoxIconError)
 		return
@@ -52,7 +55,7 @@ func main() {
 	} else {
 		defer closer.Close()
 	}
-	if err := gemini.ConfigureCache(filepath.Dir(exe)); err != nil {
+	if err := gemini.ConfigureCache(exeDir); err != nil {
 		logger.Printf("cache init failed: %v", err)
 	}
 	events := make(chan trigger.Event, 2)
@@ -63,11 +66,16 @@ func main() {
 	defer speaker.Close()
 	var win *popup.Window
 	var current model.Selection
-	var cancel context.CancelFunc
 	var mu sync.Mutex
+	var selectionCancel context.CancelFunc
+	queryService := query.New(func() *gemini.Client { return gemini.New(cfg.APIKey, cfg.Model) }, 20*time.Second)
+	if err := settings.SyncStartup(exe, cfg.StartupEnabled); err != nil {
+		logger.Printf("startup sync failed")
+	}
+	var mainWin *mainwindow.Window
 	retry := func() {
 		if strings.TrimSpace(current.Text) != "" {
-			startLookup(win, &cfg, speaker, logger, current, &mu, &cancel)
+			lookupPopup(queryService, win, &cfg, speaker, logger, current)
 		}
 	}
 	w, err := popup.New(popup.Callbacks{Speak: func() {
@@ -77,7 +85,7 @@ func main() {
 			}
 		}
 	}, Retry: retry, Hidden: speaker.Stop, Settings: func() {
-		if settings.Edit(nil, &cfg) {
+		if settings.Edit(nil, &cfg, exe) {
 			logger.Print("settings updated")
 		}
 	}})
@@ -86,6 +94,31 @@ func main() {
 		return
 	}
 	win = w
+	mw, err := mainwindow.New(mainwindow.Callbacks{
+		Lookup: func(text string) {
+			sel := model.Selection{Text: text}
+			queryService.Lookup("main", sel, func(state model.ViewState) { win.MW.Synchronize(func() { mainWin.Update(state) }) })
+		},
+		SelectHistory: func(key string) {
+			if d, ok := queryService.SelectHistory(key); ok {
+				mainWin.Update(model.ViewState{Kind: model.ViewSuccess, Definition: d})
+			}
+		},
+		Speak: func(text string) {
+			if err := speaker.SpeakAgain(text); err != nil {
+				mainWin.Update(model.ViewState{Kind: model.ViewError, Selection: text, Message: err.Error()})
+			}
+		},
+	})
+	if err != nil {
+		walk.MsgBox(nil, "TouchDict", err.Error(), walk.MsgBoxIconError)
+		return
+	}
+	mainWin = mw
+	defer mainWin.Close()
+	mainWin.SetHistory(queryService.History())
+	unsubscribe := queryService.SubscribeHistory(func(entries []model.HistoryEntry) { win.MW.Synchronize(func() { mainWin.SetHistory(entries) }) })
+	defer unsubscribe()
 	appIcon, _ := walk.NewIconFromResourceId(2)
 	if appIcon != nil {
 		_ = win.MW.SetIcon(appIcon)
@@ -114,6 +147,20 @@ func main() {
 	if appIcon != nil {
 		_ = notify.SetIcon(appIcon)
 	}
+	openMain := func() { mainWin.Show() }
+	addAction(notify, "打开主窗口", openMain)
+	var lastTrayClick time.Time
+	notify.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+		if button == walk.LeftButton {
+			now := time.Now()
+			if now.Sub(lastTrayClick) < 500*time.Millisecond {
+				openMain()
+				lastTrayClick = time.Time{}
+			} else {
+				lastTrayClick = now
+			}
+		}
+	})
 	addAction(notify, "查词（Ctrl+Alt+D）", func() {
 		select {
 		case events <- trigger.Event{At: time.Now(), Source: "tray"}:
@@ -121,26 +168,25 @@ func main() {
 		}
 	})
 	paused := false
-	pauseAction := addAction(notify, "暂停监听", func() {
+	var pauseAction *walk.Action
+	pauseAction = addAction(notify, "暂停监听", func() {
 		paused = !paused
 		listener.SetEnabled(!paused)
 		if paused {
-			pauseActionText(notify, "继续监听")
+			pauseAction.SetText("继续监听")
 		} else {
-			pauseActionText(notify, "暂停监听")
+			pauseAction.SetText("暂停监听")
 		}
 	})
-	_ = pauseAction
 	addAction(notify, "界面预览", func() {
 		var p point
 		getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 		win.ShowAt(walk.Point{X: int(p.X), Y: int(p.Y)}, preview.State("normal"))
 	})
-	addAction(notify, "设置", func() { _ = settings.Edit(nil, &cfg) })
+	addAction(notify, "设置", func() { _ = settings.Edit(nil, &cfg, exe) })
 	addAction(notify, "退出", func() {
-		if cancel != nil {
-			cancel()
-		}
+		queryService.Cancel("popup")
+		queryService.Cancel("main")
 		listener.Close()
 		notify.Dispose()
 		win.MW.Dispose()
@@ -158,16 +204,18 @@ func main() {
 				continue
 			}
 			mu.Lock()
-			if cancel != nil {
-				cancel()
+			if selectionCancel != nil {
+				selectionCancel()
 			}
 			ctx, c := context.WithCancel(context.Background())
-			cancel = c
+			selectionCancel = c
 			mu.Unlock()
 			sel, e := reader.Read(ctx, event.Source == "alt")
+			wasCanceled := ctx.Err() != nil
+			c()
 			if e != nil {
 				logger.Printf("capture failed source=%s error=%T", event.Source, e)
-				if ctx.Err() == nil {
+				if !wasCanceled {
 					win.MW.Synchronize(func() {
 						var p point
 						getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
@@ -180,62 +228,40 @@ func main() {
 			if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
 				_ = speaker.Speak(sel.Text)
 			}
-			if d, ok := gemini.Cached(sel); ok {
-				logger.Printf("lookup cache hit")
-				win.MW.Synchronize(func() {
-					current = sel
-					var p point
-					getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
-					win.ShowAt(walk.Point{X: int(p.X), Y: int(p.Y)}, model.ViewState{Kind: model.ViewSuccess, Definition: d, Message: "缓存结果"})
-					if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
-						_ = speaker.SpeakAgain(d.Term)
-					}
-				})
-				continue
-			}
 			win.MW.Synchronize(func() {
 				current = sel
 				var p point
 				getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 				win.ShowAt(walk.Point{X: int(p.X), Y: int(p.Y)}, model.ViewState{Kind: model.ViewLoading, Selection: sel.Text})
 			})
-			startLookup(win, &cfg, speaker, logger, sel, &mu, &cancel)
+			lookupPopup(queryService, win, &cfg, speaker, logger, sel)
 		}
 	}()
 	logger.Print("application started")
 	win.MW.Run()
 }
 
-func startLookup(win *popup.Window, cfg *settings.Config, speaker *speech.Service, logger *log.Logger, sel model.Selection, mu *sync.Mutex, cancel *context.CancelFunc) {
-	mu.Lock()
-	if *cancel != nil {
-		(*cancel)()
-	}
-	ctx, c := context.WithTimeout(context.Background(), 20*time.Second)
-	*cancel = c
-	mu.Unlock()
-	client := gemini.New(cfg.APIKey, cfg.Model)
-	go func() {
-		d, err := client.Lookup(ctx, sel)
-		if ctx.Err() != nil {
-			return
-		}
+func lookupPopup(service *query.Service, win *popup.Window, cfg *settings.Config, speaker *speech.Service, logger *log.Logger, sel model.Selection) {
+	service.Lookup("popup", sel, func(state model.ViewState) {
 		win.MW.Synchronize(func() {
-			if err != nil {
-				logger.Printf("lookup failed: %v", err)
-				win.Update(model.ViewState{Kind: model.ViewError, Selection: sel.Text, Message: err.Error(), CanRetry: true})
-				return
+			if state.Kind == model.ViewError {
+				logger.Printf("lookup failed: %s", state.Message)
 			}
-			win.Update(model.ViewState{Kind: model.ViewSuccess, Definition: d})
-			if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) && speaker.Available() {
-				if err := speaker.SpeakAgain(d.Term); err != nil {
-					win.SetStatus(err.Error())
+			if state.Kind == model.ViewSuggestions {
+				state = model.ViewState{Kind: model.ViewError, Selection: sel.Text, Message: "可能存在拼写错误，请打开主窗口查看候选词"}
+			}
+			win.Update(state)
+			if state.Kind == model.ViewSuccess && autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
+				if speaker.Available() {
+					if err := speaker.SpeakAgain(state.Definition.Term); err != nil {
+						win.SetStatus(err.Error())
+					}
+				} else {
+					win.SetStatus("Windows 美式英语语音不可用")
 				}
-			} else if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
-				win.SetStatus("Windows 美式英语语音不可用")
 			}
 		})
-	}()
+	})
 }
 func addAction(n *walk.NotifyIcon, text string, fn func()) *walk.Action {
 	a := walk.NewAction()
@@ -243,12 +269,6 @@ func addAction(n *walk.NotifyIcon, text string, fn func()) *walk.Action {
 	a.Triggered().Attach(fn)
 	_ = n.ContextMenu().Actions().Add(a)
 	return a
-}
-func pauseActionText(n *walk.NotifyIcon, text string) {
-	actions := n.ContextMenu().Actions()
-	if actions.Len() > 1 {
-		actions.At(1).SetText(text)
-	}
 }
 func singleInstance() bool {
 	name, _ := syscall.UTF16PtrFromString("Local\\TouchDict.SingleInstance")

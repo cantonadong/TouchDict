@@ -17,7 +17,7 @@ var GeminiModels = []string{
 	"gemini-flash-latest",
 }
 
-func Edit(owner walk.Form, cfg *Config) bool {
+func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 	d, err := walk.NewDialog(owner)
 	if err != nil {
 		return false
@@ -28,7 +28,7 @@ func Edit(owner walk.Form, cfg *Config) bool {
 		_ = d.SetIcon(icon)
 		defer icon.Dispose()
 	}
-	d.SetSize(walk.Size{Width: 500, Height: 280})
+	d.SetSize(walk.Size{Width: 500, Height: 320})
 	l := walk.NewVBoxLayout()
 	l.SetMargins(walk.Margins{HNear: 18, VNear: 18, HFar: 18, VFar: 18})
 	l.SetSpacing(6)
@@ -85,6 +85,7 @@ func Edit(owner walk.Form, cfg *Config) bool {
 	alt := newLeftCheck("启用三指点按（需开启触控板左 Alt 触发）", cfg.AltEnabled)
 	hot := newLeftCheck("启用 Ctrl+Alt+D", cfg.HotkeyEnabled)
 	auto := newLeftCheck("查询成功后自动发音", cfg.AutoSpeak)
+	startup := newLeftCheck("开机自动启动", cfg.StartupEnabled)
 	row, _ := walk.NewComposite(d)
 	_ = row.SetLayout(walk.NewHBoxLayout())
 	_, _ = walk.NewHSpacer(row)
@@ -94,17 +95,25 @@ func Edit(owner walk.Form, cfg *Config) bool {
 	save, _ := walk.NewPushButton(row)
 	save.SetText("保存")
 	save.Clicked().Attach(func() {
-		cfg.APIKey = key.Text()
+		updated := *cfg
+		updated.APIKey = key.Text()
 		if i := modelDrop.CurrentIndex(); i >= 0 && i < len(models) {
-			cfg.Model = models[i]
+			updated.Model = models[i]
 		}
-		cfg.AltEnabled = alt.Checked()
-		cfg.HotkeyEnabled = hot.Checked()
-		cfg.AutoSpeak = auto.Checked()
-		if err := cfg.Save(); err != nil {
+		updated.AltEnabled = alt.Checked()
+		updated.HotkeyEnabled = hot.Checked()
+		updated.AutoSpeak = auto.Checked()
+		updated.StartupEnabled = startup.Checked()
+		if err := SyncStartup(exePath, updated.StartupEnabled); err != nil {
 			walk.MsgBox(d, "保存失败", err.Error(), walk.MsgBoxIconError)
 			return
 		}
+		if err := updated.Save(); err != nil {
+			_ = SyncStartup(exePath, cfg.StartupEnabled)
+			walk.MsgBox(d, "保存失败", err.Error(), walk.MsgBoxIconError)
+			return
+		}
+		*cfg = updated
 		d.Accept()
 	})
 	return d.Run() == walk.DlgCmdOK

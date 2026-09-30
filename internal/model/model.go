@@ -16,6 +16,18 @@ type Definition struct {
 	ExampleZH    string `json:"exampleZh"`
 }
 
+type QueryResult struct {
+	Definition  *Definition
+	Suggestions []string
+}
+
+type HistoryEntry struct {
+	Key        string
+	Query      string
+	Context    string
+	Definition Definition
+}
+
 type ViewKind int
 
 const (
@@ -24,12 +36,14 @@ const (
 	ViewSuccess
 	ViewEmpty
 	ViewError
+	ViewSuggestions
 )
 
 type ViewState struct {
-	Kind       ViewKind
-	Selection  string
-	Definition Definition
-	Message    string
-	CanRetry   bool
+	Kind        ViewKind
+	Selection   string
+	Definition  Definition
+	Message     string
+	CanRetry    bool
+	Suggestions []string
 }
