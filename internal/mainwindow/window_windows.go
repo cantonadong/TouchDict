@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"strings"
+	"syscall"
 
 	"github.com/lxn/walk"
 	"touchdict/internal/model"
@@ -26,13 +27,19 @@ type Window struct {
 	term, pos, meaning, example, translation, status *walk.TextLabel
 	suggestions                                      *walk.LinkLabel
 	speak, queryButton, retry                        *walk.PushButton
+	pin                                              *walk.PushButton
 	entries                                          []model.HistoryEntry
 	callbacks                                        Callbacks
 	querying                                         bool
 	currentQuery                                     string
 	fontScale                                        int
 	resultFonts                                      []*walk.Font
+	icon                                             *walk.Icon
+	titleFont                                        *walk.Font
+	pinned                                           bool
 }
+
+var setWindowPos = syscall.NewLazyDLL("user32.dll").NewProc("SetWindowPos")
 
 func New(c Callbacks) (*Window, error) {
 	mw, err := walk.NewMainWindow()
@@ -47,6 +54,24 @@ func New(c Callbacks) (*Window, error) {
 	root.SetSpacing(12)
 	_ = mw.SetLayout(root)
 	w := &Window{MW: mw, callbacks: c}
+	header, _ := walk.NewComposite(mw)
+	headerLayout := walk.NewHBoxLayout()
+	headerLayout.SetMargins(walk.Margins{})
+	headerLayout.SetSpacing(10)
+	_ = header.SetLayout(headerLayout)
+	logo, _ := walk.NewImageView(header)
+	_ = logo.SetMinMaxSize(walk.Size{Width: 42, Height: 42}, walk.Size{Width: 42, Height: 42})
+	if icon, iconErr := walk.NewIconFromResourceId(2); iconErr == nil {
+		w.icon = icon
+		_ = logo.SetImage(icon)
+	}
+	title, _ := walk.NewTextLabel(header)
+	title.SetText("TouchDict")
+	if titleFont, fontErr := walk.NewFont("Segoe UI", 18, 0); fontErr == nil {
+		title.SetFont(titleFont)
+		w.titleFont = titleFont
+	}
+	_, _ = walk.NewHSpacer(header)
 	searchRow, _ := walk.NewComposite(mw)
 	searchLayout := walk.NewHBoxLayout()
 	searchLayout.SetMargins(walk.Margins{})
@@ -75,19 +100,28 @@ func New(c Callbacks) (*Window, error) {
 			submit()
 		}
 	})
-	body, _ := walk.NewComposite(mw)
-	bodyLayout := walk.NewHBoxLayout()
-	bodyLayout.SetMargins(walk.Margins{})
-	bodyLayout.SetSpacing(14)
-	_ = body.SetLayout(bodyLayout)
-	w.history, _ = walk.NewListBox(body)
-	_ = w.history.SetMinMaxSize(walk.Size{Width: 210}, walk.Size{Width: 210, Height: 16777215})
-	result, _ := walk.NewComposite(body)
+	splitter, _ := walk.NewHSplitter(mw)
+	_ = root.SetStretchFactor(splitter, 1)
+	w.history, _ = walk.NewListBox(splitter)
+	_ = w.history.SetMinMaxSize(walk.Size{Width: 170}, walk.Size{Width: 260, Height: 16777215})
+	result, _ := walk.NewComposite(splitter)
 	resultLayout := walk.NewVBoxLayout()
 	resultLayout.SetMargins(walk.Margins{HNear: 12, VNear: 8, HFar: 12, VFar: 8})
 	resultLayout.SetSpacing(10)
 	_ = result.SetLayout(resultLayout)
-	w.term, _ = walk.NewTextLabel(result)
+	termRow, _ := walk.NewComposite(result)
+	termLayout := walk.NewHBoxLayout()
+	termLayout.SetMargins(walk.Margins{})
+	termLayout.SetSpacing(0)
+	_ = termRow.SetLayout(termLayout)
+	w.term, _ = walk.NewTextLabel(termRow)
+	_, _ = walk.NewHSpacer(termRow)
+	zoomOut, _ := walk.NewPushButton(termRow)
+	zoomOut.SetText("−")
+	_ = zoomOut.SetMinMaxSize(walk.Size{Width: 36, Height: 30}, walk.Size{Width: 36, Height: 30})
+	zoomIn, _ := walk.NewPushButton(termRow)
+	zoomIn.SetText("+")
+	_ = zoomIn.SetMinMaxSize(walk.Size{Width: 36, Height: 30}, walk.Size{Width: 36, Height: 30})
 	w.pos, _ = walk.NewTextLabel(result)
 	w.meaning, _ = walk.NewTextLabel(result)
 	_ = w.meaning.SetMinMaxSize(walk.Size{}, walk.Size{Width: 16777215, Height: 16777215})
@@ -100,6 +134,7 @@ func New(c Callbacks) (*Window, error) {
 	w.status, _ = walk.NewTextLabel(result)
 	actions, _ := walk.NewComposite(result)
 	actions.SetLayout(walk.NewHBoxLayout())
+	_, _ = walk.NewHSpacer(actions)
 	w.speak, _ = walk.NewPushButton(actions)
 	w.speak.SetText("朗读")
 	w.speak.Clicked().Attach(func() {
@@ -110,6 +145,11 @@ func New(c Callbacks) (*Window, error) {
 	w.retry, _ = walk.NewPushButton(actions)
 	w.retry.SetText("重试")
 	w.retry.Clicked().Attach(submit)
+	w.pin, _ = walk.NewPushButton(actions)
+	w.pin.SetText("固顶")
+	_ = w.pin.SetMinMaxSize(walk.Size{Width: 118, Height: 34}, walk.Size{Width: 150, Height: 40})
+	w.pin.Clicked().Attach(func() { w.pinned = !w.pinned; w.applyPinned() })
+	_ = w.speak.SetMinMaxSize(walk.Size{Width: 118, Height: 34}, walk.Size{Width: 150, Height: 40})
 	_, _ = walk.NewHSpacer(actions)
 	w.history.CurrentIndexChanged().Attach(func() {
 		i := w.history.CurrentIndex()
@@ -122,6 +162,8 @@ func New(c Callbacks) (*Window, error) {
 		c.InitialScale = 120
 	}
 	w.applyScale(c.InitialScale)
+	zoomOut.Clicked().Attach(func() { w.changeScale(-10) })
+	zoomIn.Clicked().Attach(func() { w.changeScale(10) })
 	zoomKey := func(key walk.Key) {
 		if !walk.ControlDown() {
 			return
@@ -134,14 +176,11 @@ func New(c Callbacks) (*Window, error) {
 			delta = -10
 		}
 		if delta != 0 {
-			w.applyScale(w.fontScale + delta)
-			if c.ZoomChanged != nil {
-				c.ZoomChanged(w.fontScale)
-			}
+			w.changeScale(delta)
 		}
 	}
 	mw.KeyDown().Attach(zoomKey)
-	for _, widget := range []walk.Widget{w.input, w.history, w.queryButton, w.speak, w.retry, w.suggestions} {
+	for _, widget := range []walk.Widget{w.input, w.history, w.queryButton, w.speak, w.retry, w.pin, zoomOut, zoomIn, w.suggestions} {
 		widget.KeyDown().Attach(zoomKey)
 	}
 	mw.Closing().Attach(func(cancel *bool, reason walk.CloseReason) { *cancel = true; mw.Hide() })
@@ -153,9 +192,34 @@ func (w *Window) Show() { w.MW.Show(); _ = w.input.SetFocus() }
 func (w *Window) Hide() { w.MW.Hide() }
 func (w *Window) Close() {
 	w.MW.Dispose()
+	if w.icon != nil {
+		w.icon.Dispose()
+	}
+	if w.titleFont != nil {
+		w.titleFont.Dispose()
+	}
 	for _, font := range w.resultFonts {
 		font.Dispose()
 	}
+}
+
+func (w *Window) changeScale(delta int) {
+	before := w.fontScale
+	w.applyScale(before + delta)
+	if w.fontScale != before && w.callbacks.ZoomChanged != nil {
+		w.callbacks.ZoomChanged(w.fontScale)
+	}
+}
+
+func (w *Window) applyPinned() {
+	insertAfter := ^uintptr(1)
+	if w.pinned {
+		insertAfter = ^uintptr(0)
+		w.pin.SetText("取消固顶")
+	} else {
+		w.pin.SetText("固顶")
+	}
+	setWindowPos.Call(uintptr(w.MW.Handle()), insertAfter, 0, 0, 0, 0, 0x0001|0x0002|0x0010|0x0040)
 }
 
 func (w *Window) SetHistory(entries []model.HistoryEntry) {

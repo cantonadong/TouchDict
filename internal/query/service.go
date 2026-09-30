@@ -78,9 +78,5 @@ func (s *Service) SubscribeHistory(fn func([]model.HistoryEntry)) func() {
 	return gemini.SubscribeHistory(fn)
 }
 func (s *Service) SelectHistory(key string) (model.Definition, bool) {
-	d, ok := gemini.HistoryDefinition(key)
-	if ok {
-		gemini.Touch(key)
-	}
-	return d, ok
+	return gemini.HistoryDefinition(key)
 }
