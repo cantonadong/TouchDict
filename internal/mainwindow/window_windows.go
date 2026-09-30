@@ -51,6 +51,9 @@ func New(c Callbacks) (*Window, error) {
 	w.input.SetCueBanner("输入英文单词、短语或句子")
 	w.queryButton, _ = walk.NewPushButton(searchRow)
 	w.queryButton.SetText("查询")
+	w.input.TextChanged().Attach(func() {
+		w.queryButton.SetEnabled(!w.querying || strings.TrimSpace(w.input.Text()) != w.currentQuery)
+	})
 	submit := func() {
 		if q := strings.TrimSpace(w.input.Text()); q != "" && c.Lookup != nil {
 			if w.querying && q == w.currentQuery {
@@ -149,7 +152,7 @@ func (w *Window) Update(s model.ViewState) {
 	w.speak.SetEnabled(false)
 	w.retry.SetVisible(false)
 	w.querying = s.Kind == model.ViewLoading
-	w.queryButton.SetEnabled(!w.querying)
+	w.queryButton.SetEnabled(!w.querying || strings.TrimSpace(w.input.Text()) != w.currentQuery)
 	switch s.Kind {
 	case model.ViewLoading:
 		w.term.SetText(s.Selection)

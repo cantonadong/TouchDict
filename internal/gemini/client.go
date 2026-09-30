@@ -135,12 +135,15 @@ func (c *Client) Lookup(ctx context.Context, s model.Selection) (model.QueryResu
 	}
 	if response.Type == "suggestions" {
 		suggestions := cleanSuggestions(response.Suggestions)
-		if len(suggestions) == 0 {
+		if len(suggestions) == 0 || definitionHasContent(response.Definition) {
 			return model.QueryResult{}, errors.New("词典结果格式异常，请重试")
 		}
 		return model.QueryResult{Suggestions: suggestions}, nil
 	}
 	if response.Type != "definition" {
+		return model.QueryResult{}, errors.New("词典结果格式异常，请重试")
+	}
+	if len(cleanSuggestions(response.Suggestions)) != 0 {
 		return model.QueryResult{}, errors.New("词典结果格式异常，请重试")
 	}
 	d := response.Definition
@@ -158,6 +161,10 @@ func (c *Client) Lookup(ctx context.Context, s model.Selection) (model.QueryResu
 	}
 	storeCached(cacheKey, s, d)
 	return model.QueryResult{Definition: &d}, nil
+}
+
+func definitionHasContent(d model.Definition) bool {
+	return strings.TrimSpace(d.Kind+d.Term+d.PartOfSpeech+d.MeaningZH+d.ExampleEN+d.ExampleZH) != ""
 }
 
 func cleanSuggestions(values []string) []string {
