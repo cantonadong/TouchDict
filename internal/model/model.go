@@ -5,7 +5,10 @@ type Selection struct {
 	Context   string
 	Source    string
 	Multiword bool
+	Bounds    *SelectionBounds
 }
+
+type SelectionBounds struct{ Left, Top, Right, Bottom int }
 
 type Definition struct {
 	Kind         string `json:"kind"`

@@ -5,6 +5,7 @@ package settings
 import (
 	"github.com/lxn/walk"
 	"syscall"
+	"touchdict/internal/uistyle"
 	"unsafe"
 )
 
@@ -23,6 +24,9 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 		return false
 	}
 	defer d.Dispose()
+	if font, fontErr := walk.NewFont("Microsoft YaHei UI", 9, 0); fontErr == nil {
+		d.SetFont(font)
+	}
 	d.SetTitle("TouchDict 设置")
 	if icon, iconErr := walk.NewIconFromResourceId(2); iconErr == nil {
 		_ = d.SetIcon(icon)
@@ -30,8 +34,8 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 	}
 	d.SetSize(walk.Size{Width: 500, Height: 320})
 	l := walk.NewVBoxLayout()
-	l.SetMargins(walk.Margins{HNear: 18, VNear: 18, HFar: 18, VFar: 18})
-	l.SetSpacing(6)
+	l.SetMargins(walk.Margins{HNear: 36, VNear: 36, HFar: 36, VFar: 36})
+	l.SetSpacing(12)
 	_ = d.SetLayout(l)
 	labelRow, _ := walk.NewComposite(d)
 	labelLayout := walk.NewHBoxLayout()
@@ -51,7 +55,7 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 	key.SetText(cfg.APIKey)
 	d.Starting().Attach(func() { _ = key.SetFocus() })
 	gap, _ := walk.NewVSpacer(d)
-	_ = gap.SetMinMaxSize(walk.Size{Height: 8}, walk.Size{Height: 8})
+	_ = gap.SetMinMaxSize(walk.Size{Height: 16}, walk.Size{Height: 16})
 	modelLabel, _ := walk.NewTextLabel(d)
 	modelLabel.SetText("Gemini 模型")
 	_ = modelLabel.SetTextAlignment(walk.AlignHNearVNear)
@@ -75,6 +79,7 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 		checkRow, _ := walk.NewComposite(d)
 		checkLayout := walk.NewHBoxLayout()
 		checkLayout.SetMargins(walk.Margins{})
+		checkLayout.SetSpacing(12)
 		_ = checkRow.SetLayout(checkLayout)
 		box, _ := walk.NewCheckBox(checkRow)
 		box.SetText(text)
@@ -87,7 +92,9 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 	auto := newLeftCheck("查询成功后自动发音", cfg.AutoSpeak)
 	startup := newLeftCheck("开机自动启动", cfg.StartupEnabled)
 	row, _ := walk.NewComposite(d)
-	_ = row.SetLayout(walk.NewHBoxLayout())
+	buttonLayout := walk.NewHBoxLayout()
+	buttonLayout.SetSpacing(12)
+	_ = row.SetLayout(buttonLayout)
 	_, _ = walk.NewHSpacer(row)
 	cancel, _ := walk.NewPushButton(row)
 	cancel.SetText("取消")
@@ -116,6 +123,8 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 		*cfg = updated
 		d.Accept()
 	})
+	uistyle.FitButton(cancel)
+	uistyle.FitButton(save)
 	return d.Run() == walk.DlgCmdOK
 }
 

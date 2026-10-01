@@ -86,7 +86,7 @@ func (r *Reader) Read(ctx context.Context, hoverMode bool) (model.Selection, err
 	if len([]rune(text)) > 300 {
 		text = string([]rune(text)[:300])
 	}
-	return model.Selection{Text: text, Context: "", Multiword: len(strings.Fields(text)) > 1}, nil
+	return model.Selection{Text: text, Context: "", Multiword: len(strings.Fields(text)) > 1, Bounds: readSelectionBounds(ctx)}, nil
 }
 
 func doubleClick() {

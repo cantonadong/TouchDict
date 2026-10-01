@@ -30,18 +30,25 @@ import (
 )
 
 var (
-	getCursorPos = syscall.NewLazyDLL("user32.dll").NewProc("GetCursorPos")
-	createMutex  = syscall.NewLazyDLL("kernel32.dll").NewProc("CreateMutexW")
+	getCursorPos  = syscall.NewLazyDLL("user32.dll").NewProc("GetCursorPos")
+	createMutex   = syscall.NewLazyDLL("kernel32.dll").NewProc("CreateMutexW")
+	instanceMutex syscall.Handle
 )
 
 type point struct{ X, Y int32 }
 
 func main() {
 	runtime.LockOSThread()
-	if !singleInstance() {
+	first, instanceErr := singleInstance()
+	if instanceErr != nil {
+		walk.MsgBox(nil, "TouchDict", "无法检查运行实例："+instanceErr.Error(), walk.MsgBoxIconError)
+		return
+	}
+	if !first {
 		walk.MsgBox(nil, "TouchDict", "TouchDict 已经在运行。", walk.MsgBoxIconInformation)
 		return
 	}
+	defer syscall.CloseHandle(instanceMutex)
 	exe, _ := os.Executable()
 	exeDir := filepath.Dir(exe)
 	cfg, err := settings.Load(exeDir)
@@ -102,6 +109,11 @@ func main() {
 		SelectHistory: func(key string) {
 			if d, ok := queryService.SelectHistory(key); ok {
 				mainWin.Update(model.ViewState{Kind: model.ViewSuccess, Definition: d})
+				if autoSpeakAllowed(cfg.AutoSpeak, d.Term) && speaker.Available() {
+					if err := speaker.Speak(d.Term); err != nil {
+						logger.Printf("history speech failed: %v", err)
+					}
+				}
 			}
 		},
 		Speak: func(text string) {
@@ -109,13 +121,10 @@ func main() {
 				mainWin.Update(model.ViewState{Kind: model.ViewError, Selection: text, Message: err.Error()})
 			}
 		},
-		InitialScale: cfg.ResultFontScale,
-		ZoomChanged: func(scale int) {
-			cfg.ResultFontScale = scale
-			if err := cfg.Save(); err != nil {
-				logger.Printf("font scale save failed")
-			}
-		},
+		InitialTermSize:    30,
+		InitialContentSize: 12,
+		TermSizeChanged:    func(size int) { win.SetTermSize(size) },
+		ContentSizeChanged: func(size int) { win.SetContentSize(size) },
 	})
 	if err != nil {
 		walk.MsgBox(nil, "TouchDict", err.Error(), walk.MsgBoxIconError)
@@ -132,12 +141,28 @@ func main() {
 		defer appIcon.Dispose()
 	}
 	previewName := ""
+	mainPreview := false
 	for _, a := range os.Args[1:] {
 		if a == "--preview" {
 			previewName = "normal"
+		} else if a == "--main-preview" {
+			mainPreview = true
 		} else if strings.HasPrefix(a, "--preview=") {
 			previewName = strings.TrimPrefix(a, "--preview=")
 		}
+	}
+	if mainPreview {
+		entries := []model.HistoryEntry{
+			{Key: "systems thinkers", Query: "systems thinkers", Definition: model.Definition{Term: "systems thinkers", PartOfSpeech: "n.", MeaningZH: "系统思考者", ExampleEN: "Systems thinkers can identify the root causes of complex problems.", ExampleZH: "系统思考者能够识别复杂问题的根本原因。"}},
+			{Key: "solve", Query: "solve", Definition: model.Definition{Term: "solve", PartOfSpeech: "vt.", MeaningZH: "解决", ExampleEN: "She managed to solve the math problem.", ExampleZH: "她设法解开了这道数学题。"}},
+			{Key: "scarce", Query: "scarce", Definition: model.Definition{Term: "scarce", PartOfSpeech: "adj.", MeaningZH: "缺乏的，稀有的", ExampleEN: "Fresh water was scarce during the drought.", ExampleZH: "旱灾期间淡水非常缺乏。"}},
+		}
+		mainWin.SetHistory(entries)
+		mainWin.SetInput("scarce")
+		mainWin.Update(model.ViewState{Kind: model.ViewSuccess, Definition: entries[2].Definition})
+		mainWin.Show()
+		mainWin.MW.Run()
+		return
 	}
 	if previewName != "" {
 		win.ShowAt(walk.Point{X: 200, Y: 160}, preview.State(previewName))
@@ -239,7 +264,7 @@ func main() {
 				current = sel
 				var p point
 				getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
-				win.ShowAt(walk.Point{X: int(p.X), Y: int(p.Y)}, model.ViewState{Kind: model.ViewLoading, Selection: sel.Text})
+				win.ShowSelection(walk.Point{X: int(p.X), Y: int(p.Y)}, sel.Bounds, model.ViewState{Kind: model.ViewLoading, Selection: sel.Text})
 			})
 			lookupPopup(queryService, win, &cfg, speaker, logger, sel)
 		}
@@ -277,10 +302,18 @@ func addAction(n *walk.NotifyIcon, text string, fn func()) *walk.Action {
 	_ = n.ContextMenu().Actions().Add(a)
 	return a
 }
-func singleInstance() bool {
+func singleInstance() (bool, error) {
 	name, _ := syscall.UTF16PtrFromString("Local\\TouchDict.SingleInstance")
-	h, _, _ := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
-	return h != 0 && syscall.GetLastError() != syscall.Errno(183)
+	h, _, callErr := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
+	if h == 0 {
+		return false, callErr
+	}
+	if callErr == syscall.Errno(183) {
+		syscall.CloseHandle(syscall.Handle(h))
+		return false, nil
+	}
+	instanceMutex = syscall.Handle(h)
+	return true, nil
 }
 func autoSpeakAllowed(enabled bool, text string) bool {
 	return enabled && len(strings.Fields(text)) <= 3

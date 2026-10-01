@@ -19,6 +19,8 @@ type Config struct {
 	AutoSpeak       bool   `json:"autoSpeak"`
 	StartupEnabled  bool   `json:"startupEnabled"`
 	ResultFontScale int    `json:"resultFontScale"`
+	TermFontSize    int    `json:"termFontSize"`
+	ContentFontSize int    `json:"resultContentFontSize"`
 	configDir       string
 }
 
@@ -30,6 +32,8 @@ type diskConfig struct {
 	AutoSpeak       bool   `json:"autoSpeak"`
 	StartupEnabled  *bool  `json:"startupEnabled,omitempty"`
 	ResultFontScale *int   `json:"resultFontScale,omitempty"`
+	TermFontSize    *int   `json:"termFontSize,omitempty"`
+	ContentFontSize *int   `json:"resultContentFontSize,omitempty"`
 	ProtectedKey    []byte `json:"protectedKey,omitempty"`
 }
 
@@ -47,7 +51,7 @@ var (
 )
 
 func defaults() Config {
-	return Config{Model: "gemini-flash-lite-latest", HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true, StartupEnabled: true, ResultFontScale: 120}
+	return Config{Model: "gemini-flash-lite-latest", HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true, StartupEnabled: true, ResultFontScale: 100, TermFontSize: 30, ContentFontSize: 12}
 }
 
 func Load(exeDir string) (Config, error) {
@@ -76,6 +80,12 @@ func Load(exeDir string) (Config, error) {
 			}
 			if d.ResultFontScale != nil && *d.ResultFontScale >= 80 && *d.ResultFontScale <= 200 {
 				cfg.ResultFontScale = *d.ResultFontScale
+			}
+			if d.TermFontSize != nil && *d.TermFontSize >= 8 && *d.TermFontSize <= 72 {
+				cfg.TermFontSize = *d.TermFontSize
+			}
+			if d.ContentFontSize != nil && *d.ContentFontSize >= 8 && *d.ContentFontSize <= 72 {
+				cfg.ContentFontSize = *d.ContentFontSize
 			}
 			if len(d.ProtectedKey) > 0 {
 				cfg.APIKey, _ = unprotect(d.ProtectedKey)
