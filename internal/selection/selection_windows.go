@@ -12,10 +12,11 @@ import (
 	"unsafe"
 
 	"github.com/lxn/walk"
+	"github.com/lxn/win"
 	"touchdict/internal/model"
 )
 
-type Reader struct{}
+type Reader struct{ Diagnostics func(string) }
 
 func New() *Reader { return &Reader{} }
 
@@ -45,7 +46,12 @@ type input struct {
 	Mouse         mouseInput
 }
 
-func (r *Reader) Read(ctx context.Context, hoverMode bool) (model.Selection, error) {
+func (r *Reader) Read(ctx context.Context, hoverMode bool, points ...walk.Point) (model.Selection, error) {
+	var pointer win.POINT
+	win.GetCursorPos(&pointer)
+	if len(points) > 0 {
+		pointer.X, pointer.Y = int32(points[0].X), int32(points[0].Y)
+	}
 	clip := walk.Clipboard()
 	old, oldErr := clip.Text()
 	if oldErr == nil {
@@ -86,7 +92,11 @@ func (r *Reader) Read(ctx context.Context, hoverMode bool) (model.Selection, err
 	if len([]rune(text)) > 300 {
 		text = string([]rune(text)[:300])
 	}
-	return model.Selection{Text: text, Context: "", Multiword: len(strings.Fields(text)) > 1, Bounds: readSelectionBounds(ctx)}, nil
+	bounds, sentence, diagnostic := readSelectionDetails(ctx, text, pointer)
+	if r.Diagnostics != nil {
+		r.Diagnostics("context capture: " + diagnostic)
+	}
+	return model.Selection{Text: text, Context: sentence, Multiword: len(strings.Fields(text)) > 1, Bounds: bounds}, nil
 }
 
 func doubleClick() {

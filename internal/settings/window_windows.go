@@ -13,11 +13,6 @@ const geminiKeyURL = "https://aistudio.google.com/apikey"
 
 var shellExecute = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
 
-var GeminiModels = []string{
-	"gemini-flash-lite-latest",
-	"gemini-flash-latest",
-}
-
 func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 	d, err := walk.NewDialog(owner)
 	if err != nil {
@@ -32,49 +27,12 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 		_ = d.SetIcon(icon)
 		defer icon.Dispose()
 	}
-	d.SetSize(walk.Size{Width: 500, Height: 320})
+	d.SetSize(walk.Size{Width: 620, Height: 500})
 	l := walk.NewVBoxLayout()
 	l.SetMargins(walk.Margins{HNear: 36, VNear: 36, HFar: 36, VFar: 36})
 	l.SetSpacing(12)
 	_ = d.SetLayout(l)
-	labelRow, _ := walk.NewComposite(d)
-	labelLayout := walk.NewHBoxLayout()
-	labelLayout.SetMargins(walk.Margins{})
-	labelLayout.SetSpacing(0)
-	_ = labelRow.SetLayout(labelLayout)
-	apply, _ := walk.NewLinkLabel(labelRow)
-	_ = apply.SetText(`Gemini API Key  <a href="https://aistudio.google.com/apikey">申请</a>`)
-	_, _ = walk.NewHSpacer(labelRow)
-	apply.LinkActivated().Attach(func(link *walk.LinkLabelLink) {
-		if !openURL(uintptr(d.Handle()), link.URL()) {
-			walk.MsgBox(d, "无法打开网页", "请在浏览器中打开："+geminiKeyURL, walk.MsgBoxIconWarning)
-		}
-	})
-	key, _ := walk.NewLineEdit(d)
-	key.SetPasswordMode(true)
-	key.SetText(cfg.APIKey)
-	d.Starting().Attach(func() { _ = key.SetFocus() })
-	gap, _ := walk.NewVSpacer(d)
-	_ = gap.SetMinMaxSize(walk.Size{Height: 16}, walk.Size{Height: 16})
-	modelLabel, _ := walk.NewTextLabel(d)
-	modelLabel.SetText("Gemini 模型")
-	_ = modelLabel.SetTextAlignment(walk.AlignHNearVNear)
-	models := append([]string(nil), GeminiModels...)
-	modelIndex := 0
-	found := false
-	for i, name := range models {
-		if name == cfg.Model {
-			modelIndex, found = i, true
-			break
-		}
-	}
-	if !found && cfg.Model != "" {
-		models = append(models, cfg.Model)
-		modelIndex = len(models) - 1
-	}
-	modelDrop, _ := walk.NewDropDownBox(d)
-	_ = modelDrop.SetModel(models)
-	_ = modelDrop.SetCurrentIndex(modelIndex)
+	modelSelection := newModelTabs(d, cfg)
 	newLeftCheck := func(text string, checked bool) *walk.CheckBox {
 		checkRow, _ := walk.NewComposite(d)
 		checkLayout := walk.NewHBoxLayout()
@@ -103,9 +61,9 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 	save.SetText("保存")
 	save.Clicked().Attach(func() {
 		updated := *cfg
-		updated.APIKey = key.Text()
-		if i := modelDrop.CurrentIndex(); i >= 0 && i < len(models) {
-			updated.Model = models[i]
+		if err := modelSelection.save(&updated); err != nil {
+			walk.MsgBox(d, "无法保存", err.Error(), walk.MsgBoxIconWarning)
+			return
 		}
 		updated.AltEnabled = alt.Checked()
 		updated.HotkeyEnabled = hot.Checked()

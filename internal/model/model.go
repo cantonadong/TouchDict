@@ -1,11 +1,12 @@
 package model
 
 type Selection struct {
-	Text      string
-	Context   string
-	Source    string
-	Multiword bool
-	Bounds    *SelectionBounds
+	BypassCache bool
+	Text        string
+	Context     string
+	Source      string
+	Multiword   bool
+	Bounds      *SelectionBounds
 }
 
 type SelectionBounds struct{ Left, Top, Right, Bottom int }
@@ -29,6 +30,7 @@ type HistoryEntry struct {
 	Query      string
 	Context    string
 	Definition Definition
+	Count      uint64
 }
 
 type ViewKind int
@@ -43,6 +45,7 @@ const (
 )
 
 type ViewState struct {
+	Context     string
 	Kind        ViewKind
 	Selection   string
 	Definition  Definition

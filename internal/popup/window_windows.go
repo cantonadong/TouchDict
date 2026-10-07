@@ -3,48 +3,56 @@
 package popup
 
 import (
+	"encoding/json"
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
+	"strings"
 	"syscall"
-	"touchdict/internal/mainwindow"
+	"time"
+	"touchdict/internal/edgeview"
 	"touchdict/internal/model"
-	"touchdict/internal/uistyle"
 	"unsafe"
 )
 
 const (
 	cardWidth     = 600
 	cardMinWidth  = 400
-	cardMinHeight = 400
+	cardMinHeight = 180
 )
 
 type Callbacks struct {
-	Speak    func()
-	Retry    func()
-	Settings func()
-	Hidden   func()
+	Speak       func()
+	Retry       func()
+	Settings    func()
+	Hidden      func()
+	Lookup      func(string)
+	Diagnostics func(string)
 }
 type Window struct {
-	MW                                               *walk.MainWindow
-	term, pos, meaning, example, translation, status *walk.TextLabel
-	speak, retry, pin, copyExample                   *walk.PushButton
-	anchor                                           walk.Point
-	anchored, pinned                                 bool
-	dismissCallback                                  uintptr
-	mouseWasDown                                     bool
-	onHide                                           func()
-	toast                                            *uistyle.CopyToast
-	termSize, contentSize                            int
-	fitting                                          bool
-	subclassCallback                                 uintptr
-	fitQueued                                        bool
-	dragging                                         bool
-	content                                          *walk.Composite
-	scroll                                           *walk.ScrollView
-	selectionBounds                                  *model.SelectionBounds
-	selectionPoint                                   walk.Point
-	selectionWork                                    rect
-	autoPlacement                                    bool
+	MW                     *walk.MainWindow
+	view                   *edgeview.View
+	callbacks              Callbacks
+	state                  model.ViewState
+	failure                *walk.TextLabel
+	ready, closed          bool
+	webFailed              bool
+	initializationTimer    *time.Timer
+	pending                []func()
+	measuredHeight         int
+	anchor                 walk.Point
+	anchored, pinned       bool
+	dismissCallback        uintptr
+	mouseWasDown           bool
+	onHide                 func()
+	termSize, contentSize  int
+	fitting                bool
+	subclassCallback       uintptr
+	fitQueued, dragging    bool
+	selectionBounds        *model.SelectionBounds
+	selectionPoint         walk.Point
+	selectionWork          rect
+	autoPlacement, editing bool
+	lookup                 func(string)
 }
 type rect struct{ Left, Top, Right, Bottom int32 }
 type monitorInfo struct {
@@ -54,118 +62,181 @@ type monitorInfo struct {
 }
 
 func New(c Callbacks) (*Window, error) {
-	mw, e := walk.NewMainWindow()
-	if e != nil {
-		return nil, e
+	mw, err := walk.NewMainWindow()
+	if err != nil {
+		return nil, err
 	}
 	mw.SetTitle("TouchDict")
 	style := win.GetWindowLong(mw.Handle(), win.GWL_STYLE)
-	win.SetWindowLong(mw.Handle(), win.GWL_STYLE, style|win.WS_MAXIMIZEBOX|win.WS_MINIMIZEBOX|win.WS_CAPTION|win.WS_SYSMENU|win.WS_THICKFRAME)
-	menu := win.GetSystemMenu(mw.Handle(), false)
-	win.EnableMenuItem(menu, win.SC_MINIMIZE, win.MF_BYCOMMAND|win.MF_GRAYED)
-	win.EnableMenuItem(menu, win.SC_MAXIMIZE, win.MF_BYCOMMAND|win.MF_GRAYED)
+	win.SetWindowLong(mw.Handle(), win.GWL_STYLE, (style&^(win.WS_MAXIMIZEBOX|win.WS_MINIMIZEBOX))|win.WS_CAPTION|win.WS_SYSMENU|win.WS_THICKFRAME)
 	exStyle := win.GetWindowLong(mw.Handle(), win.GWL_EXSTYLE)
 	win.SetWindowLong(mw.Handle(), win.GWL_EXSTYLE, (exStyle&^win.WS_EX_TOOLWINDOW)|win.WS_EX_NOACTIVATE)
 	win.SetWindowPos(mw.Handle(), 0, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOZORDER|win.SWP_NOACTIVATE|win.SWP_FRAMECHANGED)
 	mw.SetSizePixels(walk.Size{Width: cardWidth, Height: cardMinHeight})
 	mw.SetMinMaxSizePixels(walk.Size{Width: cardMinWidth, Height: cardMinHeight}, walk.Size{Width: cardWidth})
-	baseFont := shellFont(14, 0)
-	if baseFont != nil {
-		mw.SetFont(baseFont)
+	root := walk.NewVBoxLayout()
+	root.SetMargins(walk.Margins{})
+	if err := mw.SetLayout(root); err != nil {
+		mw.Dispose()
+		return nil, err
 	}
-	w := &Window{MW: mw, onHide: c.Hidden}
-	scroll, _ := walk.NewScrollView(mw)
-	w.scroll = scroll
-	scroll.SetScrollbars(false, false)
-	scrollLayout := walk.NewVBoxLayout()
-	scrollLayout.SetMargins(walk.Margins{})
-	scrollLayout.SetSpacing(0)
-	_ = scroll.SetLayout(scrollLayout)
-	content, _ := walk.NewComposite(scroll)
-	w.content = content
-	termRow, _ := walk.NewComposite(content)
-	w.term, _ = walk.NewTextLabel(termRow)
-	w.retry, _ = walk.NewPushButton(termRow)
-	w.retry.SetText("重试")
-	w.retry.Clicked().Attach(func() {
-		if c.Retry != nil {
-			c.Retry()
+	w := &Window{MW: mw, callbacks: c, onHide: c.Hidden, lookup: c.Lookup, termSize: 30, contentSize: 12, state: model.ViewState{Kind: model.ViewEmpty}}
+	if err := w.trackGeometry(); err != nil {
+		mw.Dispose()
+		return nil, err
+	}
+	w.failure, err = walk.NewTextLabel(mw)
+	if err != nil {
+		mw.Dispose()
+		return nil, err
+	}
+	w.failure.SetText("正在打开查词卡片…")
+	w.failure.SetBoundsPixels(walk.Rectangle{X: 20, Y: 20, Width: 360, Height: 180})
+	host := mw.AsContainerBase()
+	view, err := edgeview.New(uintptr(host.Handle()), func(message string) { w.enqueue(func() { w.handleMessage(message) }) }, func(err error) { w.enqueue(func() { w.webFailure(err.Error()) }) }, c.Diagnostics)
+	if err != nil {
+		mw.Dispose()
+		return nil, err
+	}
+	w.view = view
+	host.SizeChanged().Attach(func() {
+		if !w.closed {
+			w.view.Resize()
 		}
 	})
-	_ = termRow.SetLayout(mainwindow.ResultLayout("term", w.term))
-	w.pos, _ = walk.NewTextLabel(content)
-	w.meaning, _ = walk.NewTextLabel(content)
-	exampleRow, _ := walk.NewComposite(content)
-	w.example, _ = walk.NewTextLabel(exampleRow)
-	w.copyExample, _ = walk.NewPushButton(exampleRow)
-	_ = w.copyExample.SetAlignment(walk.AlignHNearVNear)
-	w.copyExample.SetText("复制")
-	_ = exampleRow.SetLayout(mainwindow.ResultLayout("example", w.example))
-	w.copyExample.Clicked().Attach(func() {
-		if text := w.example.Text(); text != "" {
-			if err := walk.Clipboard().SetText(text); err == nil {
-				w.toast.Show()
+	view.SetHTML(popupPage())
+	w.initializationTimer = time.AfterFunc(30*time.Second, func() {
+		mw.Synchronize(func() {
+			if !w.ready && !w.closed {
+				w.webFailure("WebView2 启动超时，请重新打开 TouchDict")
 			}
+		})
+	})
+	w.dismissCallback = syscall.NewCallback(func(hwnd uintptr, msg uint32, timer, tick uintptr) uintptr { w.dismissOnOutsideClick(); return 0 })
+	mw.Closing().Attach(func(cancel *bool, reason walk.CloseReason) { *cancel = true; w.Hide() })
+	mw.Disposing().Attach(func() {
+		w.closed = true
+		if w.initializationTimer != nil {
+			w.initializationTimer.Stop()
+		}
+		if w.view != nil {
+			w.view.Close()
 		}
 	})
-	w.translation, _ = walk.NewTextLabel(content)
-	w.status, _ = walk.NewTextLabel(content)
-	for _, label := range []*walk.TextLabel{w.term, w.pos, w.meaning, w.example, w.translation, w.status} {
-		_ = label.SetTextAlignment(walk.AlignHNearVNear)
-		_ = label.SetMinMaxSizePixels(walk.Size{Width: 1}, walk.Size{Width: 16777215})
+	return w, nil
+}
+func (w *Window) enqueue(fn func()) {
+	if !w.closed {
+		w.pending = append(w.pending, fn)
+		win.PostMessage(w.MW.Handle(), win.WM_APP+45, 0, 0)
 	}
-	_ = content.SetLayout(mainwindow.ResultLayout("column", w.pos))
-	_ = mw.SetLayout(mainwindow.CardLayout(content, w.pos))
-	row, _ := walk.NewComposite(mw)
-	_ = row.SetLayout(mainwindow.ResultLayout("footer", nil))
-	w.speak, _ = walk.NewPushButton(row)
-	w.speak.SetText("朗读")
-	w.speak.Clicked().Attach(func() {
-		if c.Speak != nil {
-			c.Speak()
+}
+func (w *Window) webFailure(message string) {
+	if w.closed {
+		return
+	}
+	w.ready = false
+	w.webFailed = true
+	if w.initializationTimer != nil {
+		w.initializationTimer.Stop()
+	}
+	if w.view != nil {
+		w.view.Close()
+	}
+	w.failure.SetText(message)
+	w.failure.SetVisible(true)
+	if w.callbacks.Diagnostics != nil {
+		w.callbacks.Diagnostics("popup webview: " + message)
+	}
+}
+func (w *Window) SetFontSizes(termSize, contentSize int) {
+	w.termSize, w.contentSize = termSize, contentSize
+	w.render()
+}
+func (w *Window) SetTermSize(size int)     { w.SetFontSizes(size, w.contentSize) }
+func (w *Window) SetContentSize(size int)  { w.SetFontSizes(w.termSize, size) }
+func (w *Window) Update(s model.ViewState) { w.state = s; w.endTermEdit(); w.render() }
+func (w *Window) render() {
+	if !w.ready || w.closed {
+		return
+	}
+	data, _ := json.Marshal(struct {
+		State       model.ViewState `json:"state"`
+		TermSize    int             `json:"termSize"`
+		ContentSize int             `json:"contentSize"`
+		Pinned      bool            `json:"pinned"`
+	}{w.state, w.termSize, w.contentSize, w.pinned})
+	w.view.Eval("window.touchdict.applyState(" + string(data) + ")")
+}
+func (w *Window) handleMessage(message string) {
+	if w.closed || w.webFailed || len(message) > 1024*1024 {
+		return
+	}
+	var action struct {
+		Action string `json:"action"`
+		Text   string `json:"text"`
+		Height int    `json:"height"`
+	}
+	if json.Unmarshal([]byte(message), &action) != nil {
+		return
+	}
+	if action.Action == "ready" {
+		if w.ready {
+			return
 		}
-	})
-	w.pin, _ = walk.NewPushButton(row)
-	w.pin.SetText("固顶")
-	w.pin.Clicked().Attach(func() {
+		w.ready = true
+		w.initializationTimer.Stop()
+		w.failure.SetVisible(false)
+		w.render()
+		return
+	}
+	if !w.ready {
+		return
+	}
+	switch action.Action {
+	case "speak":
+		if w.state.Kind == model.ViewSuccess && w.callbacks.Speak != nil {
+			w.callbacks.Speak()
+		}
+	case "retry":
+		if w.callbacks.Retry != nil {
+			w.callbacks.Retry()
+		}
+	case "pin":
 		w.pinned = !w.pinned
 		if w.pinned {
 			w.captureAnchor()
-			w.pin.SetText("取消固顶")
-			_ = w.pin.SetMinMaxSizePixels(walk.Size{Width: 126, Height: 42}, walk.Size{Width: 126, Height: 42})
-		} else {
-			w.pin.SetText("固顶")
-			uistyle.FitButton(w.pin)
 		}
 		w.applyZOrder()
-	})
-	for _, button := range []*walk.PushButton{w.speak, w.retry, w.pin, w.copyExample} {
-		uistyle.FitButton(button)
+		w.render()
+	case "copy-example":
+		if w.state.Kind == model.ViewSuccess && w.state.Definition.ExampleEN != "" {
+			if err := walk.Clipboard().SetText(w.state.Definition.ExampleEN); err == nil {
+				w.view.Eval("window.touchdict.notice()")
+			}
+		}
+	case "edit":
+		w.beginTermEdit()
+	case "edit-cancel":
+		w.endTermEdit()
+	case "lookup":
+		if text := strings.TrimSpace(action.Text); text != "" && w.lookup != nil {
+			w.endTermEdit()
+			w.lookup(text)
+		}
+	case "content-height":
+		if action.Height > 0 && action.Height < 100000 {
+			w.measuredHeight = action.Height
+			w.queueFit()
+		}
 	}
-	w.toast, e = uistyle.NewCopyToast(mw, mw)
-	if e != nil {
-		mw.Dispose()
-		return nil, e
-	}
-	w.SetFontSizes(30, 12)
-	w.dismissCallback = syscall.NewCallback(func(hwnd uintptr, msg uint32, timer, tick uintptr) uintptr {
-		w.dismissOnOutsideClick()
-		return 0
-	})
-	if e := w.trackGeometry(); e != nil {
-		mw.Dispose()
-		return nil, e
-	}
-	mw.SizeChanged().Attach(w.queueFit)
-	mw.Closing().Attach(func(cancel *bool, reason walk.CloseReason) { *cancel = true; w.Hide() })
-	w.Update(model.ViewState{Kind: model.ViewEmpty, Message: "将三指轻点映射为左 Alt，或按 Ctrl+Alt+D 查词。"})
-	return w, nil
 }
 func (w *Window) ShowAt(p walk.Point, s model.ViewState) {
 	w.ShowSelection(p, nil, s)
 }
 
 func (w *Window) ShowSelection(p walk.Point, bounds *model.SelectionBounds, s model.ViewState) {
+	w.endTermEdit()
 	// If the user dragged a pinned window, its native position is the new
 	// anchor. Capture it before any content or visibility update can move it.
 	if w.pinned {
@@ -197,117 +268,6 @@ func (w *Window) currentHeight() int {
 	}
 	return minimum
 }
-func (w *Window) fitContent() {
-	if w.fitting || w.dragging || win.IsIconic(w.MW.Handle()) || w.content == nil {
-		return
-	}
-	w.fitting = true
-	defer func() { w.fitting = false }()
-	size := w.MW.SizePixels()
-	client := w.MW.ClientBoundsPixels().Size()
-	outerWidth := w.contentWidth() + 24 + size.Width - client.Width
-	outerWidth = max(cardMinWidth, min(cardWidth, outerWidth))
-	width := max(1, outerWidth-(size.Width-client.Width))
-	lineHeight := w.contentLineHeight()
-	required := mainwindow.ResultHeight(w.content, max(1, width-24)) + 42 + 24 + lineHeight + size.Height - client.Height
-	position := w.MW.BoundsPixels()
-	work := monitorWorkArea(walk.Point{X: position.X + size.Width/2, Y: position.Y + 30})
-	if w.autoPlacement {
-		work = w.selectionWork
-	}
-	maxHeight := max(1, int(work.Bottom-work.Top)-24)
-	height := min(maxHeight, max(cardMinHeight, required))
-	w.scroll.SetScrollbars(false, required > maxHeight)
-	if required > maxHeight {
-		// Re-measure with the scrollbar's reserved width so wrapped text is
-		// fully represented by the scrollable content extent.
-		width -= int(win.GetSystemMetricsForDpi(win.SM_CXVSCROLL, uint32(w.MW.DPI())))
-		_ = mainwindow.ResultHeight(w.content, max(1, width-24))
-	}
-	if size.Width != outerWidth || size.Height != height {
-		_ = w.MW.SetSizePixels(walk.Size{Width: outerWidth, Height: height})
-	}
-	if w.autoPlacement {
-		w.placeBesideSelection()
-	} else if w.MW.Visible() {
-		position = w.MW.BoundsPixels()
-		x := max(int(work.Left)+12, min(position.X, int(work.Right)-12-outerWidth))
-		y := max(int(work.Top)+12, min(position.Y, int(work.Bottom)-12-height))
-		if x != position.X || y != position.Y {
-			position.X, position.Y = x, y
-			_ = w.MW.SetBoundsPixels(position)
-		}
-	}
-}
-
-func (w *Window) SetFontSizes(termSize, contentSize int) {
-	w.MW.SetSuspended(true)
-	w.term.SetFont(shellFont(termSize, 0))
-	font := shellFont(contentSize, 0)
-	for _, label := range []*walk.TextLabel{w.pos, w.meaning, w.example, w.translation, w.status} {
-		label.SetFont(font)
-	}
-	w.termSize, w.contentSize = termSize, contentSize
-	w.MW.SetSuspended(false)
-	w.fitContent()
-}
-func (w *Window) SetTermSize(size int)    { w.SetFontSizes(size, w.contentSize) }
-func (w *Window) SetContentSize(size int) { w.SetFontSizes(w.termSize, size) }
-func (w *Window) Update(s model.ViewState) {
-	w.MW.SetSuspended(true)
-	if w.toast != nil {
-		w.toast.Hide()
-	}
-	defer func() {
-		for _, label := range []*walk.TextLabel{w.pos, w.meaning, w.example, w.translation, w.status} {
-			label.SetVisible(label.Text() != "")
-		}
-		w.MW.SetSuspended(false)
-		w.fitContent()
-	}()
-	w.retry.SetVisible(false)
-	w.speak.SetEnabled(false)
-	w.copyExample.SetVisible(false)
-	switch s.Kind {
-	case model.ViewLoading:
-		w.term.SetText(s.Selection)
-		w.pos.SetText("")
-		w.meaning.SetText("正在理解当前语境…")
-		w.example.SetText("")
-		w.translation.SetText("")
-		w.status.SetText("请稍候")
-	case model.ViewSuccess:
-		d := s.Definition
-		w.term.SetText(d.Term)
-		w.pos.SetText(d.PartOfSpeech)
-		w.meaning.SetText(d.MeaningZH)
-		w.example.SetText(d.ExampleEN)
-		w.translation.SetText(d.ExampleZH)
-		if s.Message == "缓存结果" {
-			w.status.SetText("")
-		} else {
-			w.status.SetText(s.Message)
-		}
-		w.speak.SetEnabled(true)
-		w.copyExample.SetVisible(d.ExampleEN != "")
-	case model.ViewError:
-		w.term.SetText(s.Selection)
-		w.pos.SetText("")
-		w.meaning.SetText(s.Message)
-		w.example.SetText("")
-		w.translation.SetText("")
-		w.status.SetText("查询失败")
-		w.retry.SetVisible(true)
-	default:
-		w.term.SetText("TouchDict")
-		w.pos.SetText("")
-		w.meaning.SetText(s.Message)
-		w.example.SetText("")
-		w.translation.SetText("")
-		w.status.SetText("")
-	}
-	w.MW.SetTitle("TouchDict")
-}
 func (w *Window) applyAnchor() {
 	if w.anchored {
 		width, height := w.MW.SizePixels().Width, w.currentHeight()
@@ -323,6 +283,10 @@ func (w *Window) applyZOrder() {
 func (w *Window) showNative() {
 	hwnd := uintptr(w.MW.Handle())
 	w.MW.Show()
+	if w.view != nil {
+		w.view.Show()
+		w.view.Resize()
+	}
 	w.fitContent()
 	w.applyAnchor()
 	showWindow.Call(hwnd, 4) // SW_SHOWNOACTIVATE: never compete with the main window.
@@ -331,14 +295,14 @@ func (w *Window) showNative() {
 	win.SetTimer(w.MW.Handle(), 0x5445, 30, w.dismissCallback)
 }
 func (w *Window) SetStatus(message string) {
-	w.status.SetText(message)
-	w.status.SetVisible(message != "")
-	w.fitContent()
+	w.state.Message = message
+	w.render()
 }
 func (w *Window) Hide() {
+	w.endTermEdit()
 	win.KillTimer(w.MW.Handle(), 0x5445)
-	if w.toast != nil {
-		w.toast.Hide()
+	if w.view != nil {
+		w.view.Hide()
 	}
 	w.MW.Hide()
 	w.anchored = false

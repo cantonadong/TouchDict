@@ -11,21 +11,28 @@ import (
 )
 
 type Config struct {
-	APIKey          string `json:"-"`
-	Model           string `json:"model"`
-	HotkeyEnabled   bool   `json:"hotkeyEnabled"`
-	MiddleEnabled   bool   `json:"middleEnabled"`
-	AltEnabled      bool   `json:"altEnabled"`
-	AutoSpeak       bool   `json:"autoSpeak"`
-	StartupEnabled  bool   `json:"startupEnabled"`
-	ResultFontScale int    `json:"resultFontScale"`
-	TermFontSize    int    `json:"termFontSize"`
-	ContentFontSize int    `json:"resultContentFontSize"`
-	configDir       string
+	APIKey           string `json:"-"`
+	Model            string `json:"model"`
+	ModelProvider    string `json:"modelProvider"`
+	LocalModelDir    string `json:"localModelDir"`
+	LocalModel       string `json:"localModel"`
+	HotkeyEnabled    bool   `json:"hotkeyEnabled"`
+	MiddleEnabled    bool   `json:"middleEnabled"`
+	AltEnabled       bool   `json:"altEnabled"`
+	AutoSpeak        bool   `json:"autoSpeak"`
+	StartupEnabled   bool   `json:"startupEnabled"`
+	ResultFontScale  int    `json:"resultFontScale"`
+	TermFontSize     int    `json:"termFontSize"`
+	ContentFontSize  int    `json:"resultContentFontSize"`
+	MainWindowHeight int    `json:"mainWindowHeightPixels"`
+	configDir        string
 }
 
 type diskConfig struct {
 	Model           string `json:"model"`
+	ModelProvider   string `json:"modelProvider,omitempty"`
+	LocalModelDir   string `json:"localModelDir,omitempty"`
+	LocalModel      string `json:"localModel,omitempty"`
 	HotkeyEnabled   bool   `json:"hotkeyEnabled"`
 	MiddleEnabled   bool   `json:"middleEnabled"`
 	AltEnabled      *bool  `json:"altEnabled,omitempty"`
@@ -34,7 +41,10 @@ type diskConfig struct {
 	ResultFontScale *int   `json:"resultFontScale,omitempty"`
 	TermFontSize    *int   `json:"termFontSize,omitempty"`
 	ContentFontSize *int   `json:"resultContentFontSize,omitempty"`
-	ProtectedKey    []byte `json:"protectedKey,omitempty"`
+	// Legacy mainWindowHeight used virtualized coordinates; start at the
+	// corrected 1200-screen-pixel default until a new preference is saved.
+	MainWindowHeight *int   `json:"mainWindowHeightPixels,omitempty"`
+	ProtectedKey     []byte `json:"protectedKey,omitempty"`
 }
 
 type dataBlob struct {
@@ -51,7 +61,7 @@ var (
 )
 
 func defaults() Config {
-	return Config{Model: "gemini-flash-lite-latest", HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true, StartupEnabled: true, ResultFontScale: 100, TermFontSize: 30, ContentFontSize: 12}
+	return Config{Model: "gemini-3.1-flash-lite", ModelProvider: "online", LocalModelDir: `D:\Models`, HotkeyEnabled: true, MiddleEnabled: true, AltEnabled: true, AutoSpeak: true, StartupEnabled: true, ResultFontScale: 100, TermFontSize: 30, ContentFontSize: 12, MainWindowHeight: 1200}
 }
 
 func Load(exeDir string) (Config, error) {
@@ -65,11 +75,18 @@ func Load(exeDir string) (Config, error) {
 	if err == nil {
 		var d diskConfig
 		if json.Unmarshal(b, &d) == nil {
+			if d.ModelProvider == "local" {
+				cfg.ModelProvider = "local"
+			}
+			if d.LocalModelDir != "" {
+				cfg.LocalModelDir = d.LocalModelDir
+			}
+			cfg.LocalModel = d.LocalModel
 			if d.Model != "" {
 				cfg.Model = d.Model
 			}
-			if cfg.Model == "gemini-2.5-flash-lite" || cfg.Model == "gemini-2.5-flash" {
-				cfg.Model = "gemini-flash-lite-latest"
+			if cfg.Model == "gemini-flash-lite-latest" {
+				cfg.Model = "gemini-3.1-flash-lite"
 			}
 			cfg.HotkeyEnabled, cfg.MiddleEnabled, cfg.AutoSpeak = d.HotkeyEnabled, d.MiddleEnabled, d.AutoSpeak
 			if d.AltEnabled != nil {
@@ -86,6 +103,9 @@ func Load(exeDir string) (Config, error) {
 			}
 			if d.ContentFontSize != nil && *d.ContentFontSize >= 8 && *d.ContentFontSize <= 72 {
 				cfg.ContentFontSize = *d.ContentFontSize
+			}
+			if d.MainWindowHeight != nil && *d.MainWindowHeight >= 560 && *d.MainWindowHeight <= 32767 {
+				cfg.MainWindowHeight = *d.MainWindowHeight
 			}
 			if len(d.ProtectedKey) > 0 {
 				cfg.APIKey, _ = unprotect(d.ProtectedKey)
@@ -120,7 +140,10 @@ func (c Config) Save() error {
 	altEnabled := c.AltEnabled
 	startupEnabled := c.StartupEnabled
 	fontScale := c.ResultFontScale
-	d := diskConfig{Model: c.Model, HotkeyEnabled: c.HotkeyEnabled, MiddleEnabled: c.MiddleEnabled, AltEnabled: &altEnabled, AutoSpeak: c.AutoSpeak, StartupEnabled: &startupEnabled, ResultFontScale: &fontScale, ProtectedKey: p}
+	termSize, contentSize := c.TermFontSize, c.ContentFontSize
+	height := c.MainWindowHeight
+	d := diskConfig{Model: c.Model, HotkeyEnabled: c.HotkeyEnabled, MiddleEnabled: c.MiddleEnabled, AltEnabled: &altEnabled, AutoSpeak: c.AutoSpeak, StartupEnabled: &startupEnabled, ResultFontScale: &fontScale, TermFontSize: &termSize, ContentFontSize: &contentSize, MainWindowHeight: &height, ProtectedKey: p}
+	d.ModelProvider, d.LocalModelDir, d.LocalModel = c.ModelProvider, c.LocalModelDir, c.LocalModel
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err

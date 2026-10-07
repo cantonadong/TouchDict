@@ -57,7 +57,7 @@ func (l *widthPreservingLayout) SetContainer(container walk.Container) {
 }
 
 func (l *widthPreservingLayout) CreateLayoutItem(ctx *walk.LayoutContext) walk.ContainerLayoutItem {
-	item := &widthPreservingLayoutItem{ContainerLayoutItem: l.BoxLayout.CreateLayoutItem(ctx), mode: l.mode}
+	item := &widthPreservingLayoutItem{ContainerLayoutItem: l.BoxLayout.CreateLayoutItem(ctx), mode: l.mode, heading: l.trimTop}
 	item.renderedLabels = make(map[win.HWND]renderedText)
 	if l.container != nil {
 		for index := 0; index < l.container.Children().Len(); index++ {
@@ -87,6 +87,7 @@ func (l *widthPreservingLayout) CreateLayoutItem(ctx *walk.LayoutContext) walk.C
 type widthPreservingLayoutItem struct {
 	walk.ContainerLayoutItem
 	mode            string
+	heading         bool
 	termWidth       int
 	topInset        int
 	lineHeight      int
@@ -134,19 +135,19 @@ func (li *widthPreservingLayoutItem) requiredSize(size walk.Size) walk.Size {
 	case "input":
 		return walk.Size{Height: 42}
 	case "term":
-		if len(children) < 2 {
+		if len(children) < 1 {
 			return walk.Size{}
 		}
 		reserve := 0
-		if children[1].Visible() {
+		if !li.heading && len(children) > 1 && children[1].Visible() {
 			reserve = 84 + gap
 		}
 		width := max(1, min(li.termWidth, size.Width-reserve))
 		height := max(0, li.height(children[0], width)-li.topInset)
-		if li.firstLineHeight > 0 && children[1].Visible() {
+		if li.firstLineHeight > 0 && len(children) > 1 && children[1].Visible() {
 			height += max(0, (42-li.firstLineHeight)/2)
 		}
-		if children[1].Visible() {
+		if len(children) > 1 && children[1].Visible() {
 			height = max(42, height)
 		}
 		return walk.Size{Height: height}
@@ -231,7 +232,7 @@ func (li *widthPreservingLayoutItem) PerformLayout() []walk.LayoutResultItem {
 		lineGap := max(1, li.lineHeight)
 		contentHeight := li.height(li.cardContent, max(1, size.Width-2*gap))
 		contentHeight = min(contentHeight, max(0, size.Height-2*gap-lineGap-42))
-		bottom := gap + contentHeight + lineGap
+		bottom := max(gap, size.Height-gap-42)
 		results := []walk.LayoutResultItem{
 			place(children[0], gap, gap, size.Width-2*gap, contentHeight),
 			place(children[1], gap, bottom, size.Width-2*gap, 42),
@@ -246,22 +247,26 @@ func (li *widthPreservingLayoutItem) PerformLayout() []walk.LayoutResultItem {
 		}
 		labelWidth := walk.IntFrom96DPI(100, li.Context().DPI())
 		labelHeight := max(1, li.height(children[1], labelWidth))
+		footerWidth := size.Width - labelWidth - 3*gap
+		if !children[1].Visible() {
+			footerWidth = size.Width - 2*gap
+		}
 		top := 0
 		if li.mode == "card" {
 			top = gap
 			size.Height -= gap
 		}
-		results := []walk.LayoutResultItem{place(children[0], gap, top, size.Width-2*gap, max(0, size.Height-top-42-gap)), place(children[1], size.Width-labelWidth-gap, max(0, size.Height-labelHeight), labelWidth, labelHeight), place(children[2], gap, max(0, size.Height-42), size.Width-labelWidth-3*gap, 42)}
+		results := []walk.LayoutResultItem{place(children[0], gap, top, size.Width-2*gap, max(0, size.Height-top-42-gap)), place(children[1], size.Width-labelWidth-gap, max(0, size.Height-labelHeight), labelWidth, labelHeight), place(children[2], gap, max(0, size.Height-42), footerWidth, 42)}
 		if len(children) > 3 {
 			results = append(results, place(children[3], (size.Width-120)/2, max(0, size.Height-42), 120, 42))
 		}
 		return results
 	case "term":
-		if len(children) < 2 {
+		if len(children) < 1 {
 			return nil
 		}
 		reserve := 0
-		if children[1].Visible() {
+		if !li.heading && len(children) > 1 && children[1].Visible() {
 			reserve = 84 + gap
 		}
 		width := max(1, min(li.termWidth, size.Width-reserve))
@@ -273,8 +278,12 @@ func (li *widthPreservingLayoutItem) PerformLayout() []walk.LayoutResultItem {
 			buttonY = max(0, (li.firstLineHeight-42)/2)
 		}
 		results := []walk.LayoutResultItem{place(children[0], 0, textY, width, height)}
-		if children[1].Visible() {
-			results = append(results, place(children[1], width+gap, buttonY, 84, 42))
+		if len(children) > 1 && children[1].Visible() {
+			if li.heading {
+				results = append(results, place(children[1], 0, max(0, textY), width, max(42, height)))
+			} else {
+				results = append(results, place(children[1], width+gap, buttonY, 84, 42))
+			}
 		}
 		return results
 	case "footer":

@@ -3,11 +3,8 @@
 package popup
 
 import (
-	"github.com/lxn/walk"
 	"github.com/lxn/win"
 	"syscall"
-	"touchdict/internal/uistyle"
-	"unsafe"
 )
 
 var (
@@ -15,7 +12,6 @@ var (
 	geometrySetSubclass    = geometryComctl.NewProc("SetWindowSubclass")
 	geometryRemoveSubclass = geometryComctl.NewProc("RemoveWindowSubclass")
 	geometryDefSubclass    = geometryComctl.NewProc("DefSubclassProc")
-	captionBoundsProc      = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmGetWindowAttribute")
 )
 
 const fitMessage = win.WM_APP + 42
@@ -30,19 +26,19 @@ func (w *Window) queueFit() {
 
 func (w *Window) trackGeometry() error {
 	w.subclassCallback = syscall.NewCallback(func(hwnd uintptr, msg uint32, wp, lp, id, data uintptr) uintptr {
-		// DWM owns the standard caption buttons. Reject their screen-space
-		// region BEFORE DefSubclassProc can start native hover/press tracking.
-		if msg == win.WM_NCHITTEST || msg == win.WM_NCMOUSEMOVE || msg == win.WM_NCLBUTTONDOWN || msg == win.WM_NCLBUTTONUP || msg == win.WM_NCLBUTTONDBLCLK {
-			if w.inDisabledCaptionButtons(lp) {
-				if msg == win.WM_NCHITTEST {
-					return win.HTNOWHERE
-				}
-				return 0
-			}
-		}
 		// A card is a stable pixel layout. Do not apply Windows' suggested
 		// DPI rectangle or Walk's descendant-font scaling when crossing monitors.
 		if msg == win.WM_DPICHANGED {
+			return 0
+		}
+		if msg == win.WM_APP+45 {
+			queue := w.pending
+			w.pending = nil
+			for _, fn := range queue {
+				if !w.closed {
+					fn()
+				}
+			}
 			return 0
 		}
 		if msg == win.WM_ENTERSIZEMOVE {
@@ -66,12 +62,6 @@ func (w *Window) trackGeometry() error {
 			if w.dragging {
 				return 0
 			}
-			w.MW.SetSuspended(true)
-			_ = w.MW.SetMinMaxSizePixels(walk.Size{Width: cardMinWidth, Height: cardMinHeight}, walk.Size{Width: cardWidth})
-			for _, button := range []*walk.PushButton{w.speak, w.pin, w.retry, w.copyExample} {
-				uistyle.LockButtonSize(button)
-			}
-			w.MW.SetSuspended(false)
 			w.fitContent()
 			// Synchronize Walk's proposed size even if the native size did not
 			// change. DPI's suggested rectangle must not drive later layouts.
@@ -79,6 +69,14 @@ func (w *Window) trackGeometry() error {
 			return 0
 		}
 		result, _, _ := geometryDefSubclass.Call(hwnd, uintptr(msg), wp, lp)
+		if w.view != nil {
+			if msg == win.WM_SIZE {
+				w.view.Resize()
+			}
+			if msg == win.WM_MOVE || msg == win.WM_WINDOWPOSCHANGED {
+				w.view.ParentMoved()
+			}
+		}
 		if msg == win.WM_INITMENU || msg == win.WM_INITMENUPOPUP {
 			w.disableWindowCommands()
 		}
@@ -102,21 +100,6 @@ func (w *Window) trackGeometry() error {
 		return err
 	}
 	return nil
-}
-
-func (w *Window) inDisabledCaptionButtons(position uintptr) bool {
-	var caption, window win.RECT
-	hr, _, _ := captionBoundsProc.Call(uintptr(w.MW.Handle()), 5, uintptr(unsafe.Pointer(&caption)), unsafe.Sizeof(caption))
-	if int32(hr) < 0 || caption.Right <= caption.Left {
-		return false
-	}
-	if !win.GetWindowRect(w.MW.Handle(), &window) {
-		return false
-	}
-	x := int32(int16(position&0xffff)) - window.Left
-	y := int32(int16((position>>16)&0xffff)) - window.Top
-	closeLeft := caption.Right - (caption.Right-caption.Left)/3
-	return x >= caption.Left && x < closeLeft && y >= caption.Top && y < caption.Bottom
 }
 
 func (w *Window) disableWindowCommands() {

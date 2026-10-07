@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 )
 
 func Open() (*log.Logger, io.Closer, error) {
@@ -23,6 +24,11 @@ func Open() (*log.Logger, io.Closer, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, nil, err
+	}
+	// Windows GUI builds have no visible stderr. Duplicate the log handle for
+	// the runtime so an unhandled panic/fatal error leaves a useful stack trace.
+	if err := debug.SetCrashOutput(f, debug.CrashOptions{}); err != nil {
+		log.New(f, "", log.Ldate|log.Ltime|log.LUTC).Printf("crash logging unavailable: %v", err)
 	}
 	return log.New(f, "", log.Ldate|log.Ltime|log.LUTC), f, nil
 }

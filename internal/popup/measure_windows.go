@@ -2,31 +2,40 @@
 
 package popup
 
-import (
-	"github.com/lxn/walk"
-	"strings"
-	"touchdict/internal/mainwindow"
-)
+import "github.com/lxn/walk"
 
-func (w *Window) contentWidth() int {
-	width := 0
-	for _, label := range []*walk.TextLabel{w.term, w.pos, w.meaning, w.example, w.translation, w.status} {
-		if label.Text() == "" {
-			continue
+func (w *Window) fitContent() {
+	if w.fitting || w.dragging || w.measuredHeight <= 0 {
+		return
+	}
+	w.fitting = true
+	defer func() { w.fitting = false }()
+	size := w.MW.SizePixels()
+	client := w.MW.ClientBoundsPixels()
+	position := w.MW.BoundsPixels()
+	work := monitorWorkArea(walk.Point{X: position.X + size.Width/2, Y: position.Y + 30})
+	if w.autoPlacement {
+		work = w.selectionWork
+	}
+	maxHeight := max(1, int(work.Bottom-work.Top)-24)
+	// Size for the entire monitor first; placement can move the card upward
+	// when the selection is near the bottom instead of forcing scrolling.
+	height := min(maxHeight, max(cardMinHeight, w.measuredHeight*w.MW.DPI()/96+size.Height-client.Height))
+	if size.Height != height {
+		w.MW.SetSizePixels(walk.Size{Width: cardWidth, Height: height})
+	}
+	if w.autoPlacement {
+		w.placeBesideSelection()
+	} else if w.MW.Visible() {
+		position = w.MW.BoundsPixels()
+		x := max(int(work.Left)+12, min(position.X, int(work.Right)-12-position.Width))
+		y := max(int(work.Top)+12, min(position.Y, int(work.Bottom)-12-position.Height))
+		if x != position.X || y != position.Y {
+			position.X, position.Y = x, y
+			_ = w.MW.SetBoundsPixels(position)
 		}
-		for _, line := range strings.Split(label.Text(), "\n") {
-			bounds := mainwindow.MeasureRenderedLabel(label, line, 100000, true)
-			lineWidth := bounds.Width + 2
-			if label == w.example || (label == w.term && w.retry.Visible()) {
-				lineWidth += 84 + 12
-			}
-			width = max(width, lineWidth)
+		if w.pinned {
+			w.captureAnchor()
 		}
 	}
-	return width
-}
-
-func (w *Window) contentLineHeight() int {
-	bounds := mainwindow.MeasureRenderedLabel(w.pos, "Ag中文", 100000, true)
-	return max(1, bounds.Height)
 }

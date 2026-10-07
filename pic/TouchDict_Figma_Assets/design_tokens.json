@@ -1,0 +1,48 @@
+{
+  "canvas": {
+    "width": 1414,
+    "height": 1058
+  },
+  "colors": {
+    "bg": "#F7F9FC",
+    "surface": "#FFFFFF",
+    "sidebar": "#FBFCFE",
+    "primary": "#2F6BFF",
+    "primary_soft": "#EAF1FF",
+    "text": "#12213A",
+    "text_secondary": "#6F7F99",
+    "border": "#DCE5F2",
+    "divider": "#E8EDF5",
+    "purple": "#A14DF0"
+  },
+  "radius": {
+    "search": 24,
+    "card": 20,
+    "button": 16,
+    "row": 14
+  },
+  "spacing": {
+    "page": 32,
+    "sidebar_width": 302,
+    "gap": 24
+  },
+  "typography": {
+    "ui": "Inter, SF Pro Display, Segoe UI, Arial, sans-serif",
+    "headword": {
+      "size": 64,
+      "weight": 700
+    },
+    "body": {
+      "size": 24,
+      "weight": 400
+    },
+    "secondary": {
+      "size": 18,
+      "weight": 400
+    },
+    "button": {
+      "size": 20,
+      "weight": 600
+    }
+  }
+}

@@ -5,6 +5,9 @@ $outputPath = Join-Path $artifactDir 'TouchDict.exe'
 
 Get-Process -Name 'TouchDict' -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+if (!(Test-Path -LiteralPath (Join-Path $artifactDir 'local-runtime/llama-server.exe'))) {
+    & (Join-Path $projectRoot 'tools/install-local-runtime.ps1')
+}
 
 Push-Location $projectRoot
 try {

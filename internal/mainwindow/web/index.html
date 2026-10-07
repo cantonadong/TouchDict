@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <title>TouchDict</title>
+  <!-- STYLE -->
+</head>
+<body>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-3-1-6-1-9 1Zm0 0v15"/></symbol>
+    <symbol id="i-speak" viewBox="0 0 34 34"><path d="M4 13h6l7-6v20l-7-6H4z"/><path d="M21 12c2.5 2.1 2.5 7.9 0 10M24 8c5 4.2 5 13.8 0 18"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 34 34"><path d="M25 9v7h-7M24 16a10 10 0 1 0 1.5 9"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 34 34"><path d="M12 4h12l-2.5 7 4.5 5H10l4.5-5zM18 16v12"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 15v6h16v-6"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  </defs></svg>
+  <div class="app">
+    <header class="topbar">
+      <form id="search-form" role="search" novalidate>
+        <div class="search-field"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="search" type="text" autocomplete="off" spellcheck="false" placeholder="输入英文单词、短语或句子" aria-label="查询英文内容" disabled></div>
+        <button id="lookup" class="primary" type="submit" disabled>查询</button>
+      </form>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar" aria-label="查词历史">
+        <div id="history-empty" class="history-empty">查过的内容会保存在这里</div>
+        <div id="history-list" role="listbox" aria-label="历史记录，使用上下键选择，Delete 删除" tabindex="0"></div>
+        <div class="history-footer"><button id="export" title="导出全部查词记录为 CSV"><svg><use href="#i-export"/></svg>导出</button><button id="clear" title="清空全部历史记录"><svg><use href="#i-trash"/></svg>清空</button></div>
+      </aside>
+      <main class="result-area">
+        <div id="result-scroll">
+          <div id="result-content">
+            <section id="welcome" class="welcome"><span class="welcome-icon"><svg><use href="#i-book"/></svg></span><h1>今天，学一个新表达</h1><p id="welcome-message">在顶部输入英文开始查询</p><div class="welcome-hints"><span>单词释义</span><span>短语理解</span><span>句子翻译</span></div></section>
+            <section id="definition" hidden>
+              <div class="term-heading"><h1 id="term"></h1></div>
+              <div id="pos" class="pos" hidden></div>
+              <div id="loading" class="loading" hidden><span class="spinner"></span><span>正在查询，请稍候…</span></div>
+              <section id="context-card" class="card context-card" hidden><h2>原句</h2><div id="context-sentence" class="body-text english"></div></section>
+              <section id="meaning-card" class="card meaning-card" hidden><h2>释义</h2><div id="meaning" class="body-text"></div></section>
+              <section id="example-card" class="card example-card" hidden><div class="card-heading"><h2>例句</h2><button id="copy" class="quiet"><svg><use href="#i-copy"/></svg>复制</button></div><div id="example" class="body-text english"></div><div id="translation" class="body-text translation" hidden></div></section>
+              <div id="suggestion-card" class="card" hidden><h2>你可能想查</h2><div id="suggestions"></div></div>
+              <div id="error" role="alert" hidden></div>
+              <p id="status" class="status" hidden></p>
+            </section>
+          </div>
+        </div>
+        <footer class="result-footer"><div class="primary-actions"><button id="speak" class="pronounce" title="朗读当前英文" disabled><svg><use href="#i-speak"/></svg>发音</button><button id="pin" aria-pressed="false"><svg><use href="#i-pin"/></svg><span id="pin-text">固顶</span></button></div><button id="retry" disabled><svg><use href="#i-retry"/></svg>重试</button></footer>
+      </main>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <!-- SCRIPT -->
+</body>
+</html>

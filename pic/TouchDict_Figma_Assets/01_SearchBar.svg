@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1346" height="80" viewBox="0 0 1346 80">
+
+<defs>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#6C8AB8" flood-opacity="0.12"/>
+  </filter>
+</defs>
+
+
+<g filter="url(#shadow)">
+  <rect x="1" y="1" width="1344" height="78" rx="24" fill="#FFFFFF" stroke="#2F6BFF" stroke-width="2"/>
+</g>
+<g transform="translate(29 24)">
+<circle cx="14" cy="14" r="9" fill="none" stroke="#66758D" stroke-width="2.4"/>
+<line x1="20.5" y1="20.5" x2="27" y2="27" stroke="#66758D" stroke-width="2.4" stroke-linecap="round"/>
+</g>
+<text x="85" y="54" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="600" fill="#12213A">thrown</text>
+<rect x="1194" y="11" width="140" height="60" rx="18" fill="#2F6BFF"/>
+<text x="1264" y="49" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="600" fill="#FFFFFF">查询</text>
+
+</svg>

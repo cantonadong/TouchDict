@@ -17,6 +17,7 @@ import (
 
 	"github.com/lxn/walk"
 	"touchdict/internal/gemini"
+	"touchdict/internal/localmodel"
 	"touchdict/internal/logging"
 	"touchdict/internal/mainwindow"
 	"touchdict/internal/model"
@@ -38,6 +39,10 @@ var (
 type point struct{ X, Y int32 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--read-selection-context" {
+		selection.RunContextHelper()
+		return
+	}
 	runtime.LockOSThread()
 	first, instanceErr := singleInstance()
 	if instanceErr != nil {
@@ -69,46 +74,116 @@ func main() {
 	listener := trigger.New(events)
 	defer listener.Close()
 	reader := selection.New()
+	reader.Diagnostics = func(message string) { logger.Print(message) }
 	speaker := speech.New()
 	defer speaker.Close()
 	var win *popup.Window
 	var current model.Selection
 	var mu sync.Mutex
 	var selectionCancel context.CancelFunc
-	queryService := query.New(func() *gemini.Client { return gemini.New(cfg.APIKey, cfg.Model) }, 20*time.Second)
+	localRuntime := localmodel.NewRuntime(exeDir)
+	defer localRuntime.Close()
+	queryService := query.New(func() query.Client {
+		if cfg.ModelProvider == "local" {
+			return localmodel.New(localRuntime, cfg.LocalModel)
+		}
+		return gemini.New(cfg.APIKey, cfg.Model)
+	}, 20*time.Second)
 	if err := settings.SyncStartup(exe, cfg.StartupEnabled); err != nil {
 		logger.Printf("startup sync failed")
 	}
 	var mainWin *mainwindow.Window
-	retry := func() {
-		if strings.TrimSpace(current.Text) != "" {
-			lookupPopup(queryService, win, &cfg, speaker, logger, current)
+	var mainRequest uint64
+	var refreshModelMenu func()
+	onModelChanged := func() {
+		mainRequest++
+		queryService.Cancel("main")
+		queryService.Cancel("popup")
+		localRuntime.Stop()
+		state := model.ViewState{Kind: model.ViewEmpty, Message: "模型已切换，请重新查询"}
+		if mainWin != nil {
+			mainWin.Update(state)
+		}
+		if win != nil {
+			win.Update(state)
 		}
 	}
-	w, err := popup.New(popup.Callbacks{Speak: func() {
+	editSettings := func() {
+		old := cfg
+		if settings.Edit(nil, &cfg, exe) {
+			if old.ModelProvider != cfg.ModelProvider || old.Model != cfg.Model || old.LocalModel != cfg.LocalModel || old.APIKey != cfg.APIKey {
+				onModelChanged()
+			}
+			logger.Print("settings updated")
+			if refreshModelMenu != nil {
+				refreshModelMenu()
+			}
+		}
+	}
+	retry := func() {
+		if strings.TrimSpace(current.Text) != "" {
+			fresh := current
+			fresh.BypassCache = true
+			lookupPopup(queryService, win, &cfg, speaker, logger, fresh)
+		}
+	}
+	w, err := popup.New(popup.Callbacks{Diagnostics: func(message string) { logger.Print(message) }, Speak: func() {
 		if current.Text != "" {
 			if err := speaker.Speak(current.Text); err != nil {
 				win.SetStatus(err.Error())
 			}
 		}
-	}, Retry: retry, Hidden: speaker.Stop, Settings: func() {
-		if settings.Edit(nil, &cfg, exe) {
-			logger.Print("settings updated")
-		}
-	}})
+	}, Lookup: func(text string) {
+		speaker.Stop()
+		current.Text = text
+		current.Multiword = len(strings.Fields(text)) > 1
+		lookupPopup(queryService, win, &cfg, speaker, logger, current)
+	}, Retry: retry, Hidden: speaker.Stop, Settings: editSettings})
 	if err != nil {
 		walk.MsgBox(nil, "TouchDict", err.Error(), walk.MsgBoxIconError)
 		return
 	}
 	win = w
 	mw, err := mainwindow.New(mainwindow.Callbacks{
-		Lookup: func(text string) {
-			sel := model.Selection{Text: text}
-			queryService.Lookup("main", sel, func(state model.ViewState) { win.MW.Synchronize(func() { mainWin.Update(state) }) })
+		Diagnostics: func(message string) { logger.Print(message) },
+		CancelLookup: func() {
+			mainRequest++
+			queryService.Cancel("main")
+		},
+		Retry: func(sel model.Selection) {
+			logger.Printf("lookup submit scope=main retry=true context_chars=%d", len([]rune(sel.Context)))
+			mainRequest++
+			request := mainRequest
+			queryService.Retry("main", sel, func(state model.ViewState) {
+				win.MW.Synchronize(func() {
+					if request == mainRequest {
+						mainWin.Update(state)
+					}
+				})
+			})
+		},
+		Lookup: func(sel model.Selection) {
+			logger.Printf("lookup submit scope=main retry=false context_chars=%d", len([]rune(sel.Context)))
+			mainRequest++
+			request := mainRequest
+			queryService.Lookup("main", sel, func(state model.ViewState) {
+				win.MW.Synchronize(func() {
+					if request == mainRequest {
+						mainWin.Update(state)
+					}
+				})
+			})
 		},
 		SelectHistory: func(key string) {
 			if d, ok := queryService.SelectHistory(key); ok {
-				mainWin.Update(model.ViewState{Kind: model.ViewSuccess, Definition: d})
+				sentence := ""
+				for _, entry := range queryService.History() {
+					if entry.Key == key {
+						sentence = entry.Context
+						break
+					}
+				}
+				mainWin.Update(model.ViewState{Kind: model.ViewSuccess, Definition: d, Context: sentence})
 				if autoSpeakAllowed(cfg.AutoSpeak, d.Term) && speaker.Available() {
 					if err := speaker.Speak(d.Term); err != nil {
 						logger.Printf("history speech failed: %v", err)
@@ -116,12 +191,26 @@ func main() {
 				}
 			}
 		},
+		DeleteHistory: func(key string) {
+			if err := queryService.DeleteHistory(key); err != nil {
+				logger.Printf("delete history failed: %v", err)
+				walk.MsgBox(mainWin.MW, "TouchDict", "删除历史记录失败："+err.Error(), walk.MsgBoxIconError)
+			}
+		},
+		ClearHistory: queryService.ClearHistory,
 		Speak: func(text string) {
 			if err := speaker.SpeakAgain(text); err != nil {
 				mainWin.Update(model.ViewState{Kind: model.ViewError, Selection: text, Message: err.Error()})
 			}
 		},
-		InitialTermSize:    30,
+		InitialTermSize: 30,
+		InitialHeight:   cfg.MainWindowHeight,
+		HeightChanged: func(height int) {
+			cfg.MainWindowHeight = height
+			if err := cfg.Save(); err != nil {
+				logger.Printf("save main window height failed: %v", err)
+			}
+		},
 		InitialContentSize: 12,
 		TermSizeChanged:    func(size int) { win.SetTermSize(size) },
 		ContentSizeChanged: func(size int) { win.SetContentSize(size) },
@@ -201,13 +290,13 @@ func main() {
 	})
 	paused := false
 	var pauseAction *walk.Action
-	pauseAction = addAction(notify, "暂停监听", func() {
+	pauseAction = addAction(notify, "监听状态：开", func() {
 		paused = !paused
 		listener.SetEnabled(!paused)
 		if paused {
-			pauseAction.SetText("继续监听")
+			pauseAction.SetText("监听状态：关")
 		} else {
-			pauseAction.SetText("暂停监听")
+			pauseAction.SetText("监听状态：开")
 		}
 	})
 	addAction(notify, "界面预览", func() {
@@ -215,11 +304,17 @@ func main() {
 		getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 		win.ShowAt(walk.Point{X: int(p.X), Y: int(p.Y)}, preview.State("normal"))
 	})
-	addAction(notify, "设置", func() { _ = settings.Edit(nil, &cfg, exe) })
+	refreshModelMenu, err = addModelMenu(notify, &cfg, win.MW, onModelChanged)
+	if err != nil {
+		walk.MsgBox(win.MW, "TouchDict", "无法创建模型菜单："+err.Error(), walk.MsgBoxIconError)
+		return
+	}
+	addAction(notify, "设置", editSettings)
 	addAction(notify, "退出", func() {
 		queryService.Cancel("popup")
 		queryService.Cancel("main")
 		listener.Close()
+		localRuntime.Stop()
 		notify.Dispose()
 		win.MW.Dispose()
 		walk.App().Exit(0)
@@ -242,7 +337,10 @@ func main() {
 			ctx, c := context.WithCancel(context.Background())
 			selectionCancel = c
 			mu.Unlock()
-			sel, e := reader.Read(ctx, event.Source == "alt")
+			var capturedPoint point
+			getCursorPos.Call(uintptr(unsafe.Pointer(&capturedPoint)))
+			sel, e := reader.Read(ctx, event.Source == "alt", walk.Point{X: int(capturedPoint.X), Y: int(capturedPoint.Y)})
+			sel.Source = event.Source
 			wasCanceled := ctx.Err() != nil
 			c()
 			if e != nil {
@@ -256,26 +354,40 @@ func main() {
 				}
 				continue
 			}
-			logger.Printf("capture succeeded source=%s", event.Source)
+			logger.Printf("capture succeeded source=%s context_chars=%d bounds=%t", event.Source, len([]rune(sel.Context)), sel.Bounds != nil)
 			if autoSpeakAllowed(cfg.AutoSpeak, sel.Text) {
 				_ = speaker.Speak(sel.Text)
 			}
 			win.MW.Synchronize(func() {
 				current = sel
-				var p point
-				getCursorPos.Call(uintptr(unsafe.Pointer(&p)))
-				win.ShowSelection(walk.Point{X: int(p.X), Y: int(p.Y)}, sel.Bounds, model.ViewState{Kind: model.ViewLoading, Selection: sel.Text})
+				mainRequest++
+				request := mainRequest
+				queryService.Cancel("main")
+				mainWin.SetInput(sel.Text)
+				mainWin.Update(model.ViewState{Kind: model.ViewLoading, Selection: sel.Text, Context: sel.Context})
+				win.ShowSelection(walk.Point{X: int(capturedPoint.X), Y: int(capturedPoint.Y)}, sel.Bounds, model.ViewState{Kind: model.ViewLoading, Selection: sel.Text, Context: sel.Context})
+				lookupPopup(queryService, win, &cfg, speaker, logger, sel, func(state model.ViewState) {
+					if request == mainRequest {
+						mainWin.Update(state)
+					}
+				})
 			})
-			lookupPopup(queryService, win, &cfg, speaker, logger, sel)
 		}
 	}()
 	logger.Print("application started")
 	win.MW.Run()
 }
 
-func lookupPopup(service *query.Service, win *popup.Window, cfg *settings.Config, speaker *speech.Service, logger *log.Logger, sel model.Selection) {
+func lookupPopup(service *query.Service, win *popup.Window, cfg *settings.Config, speaker *speech.Service, logger *log.Logger, sel model.Selection, observers ...func(model.ViewState)) {
+	logger.Printf("lookup submit scope=popup retry=%t context_chars=%d", sel.BypassCache, len([]rune(sel.Context)))
 	service.Lookup("popup", sel, func(state model.ViewState) {
 		win.MW.Synchronize(func() {
+			if state.Kind == model.ViewSuccess && sel.Source != "" && sel.Context == "" {
+				state.Message = "未能读取原句，当前结果未使用上下文"
+			}
+			for _, observer := range observers {
+				observer(state)
+			}
 			if state.Kind == model.ViewError {
 				logger.Printf("lookup failed: %s", state.Message)
 			}

@@ -3,10 +3,12 @@
 package gemini
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"touchdict/internal/model"
 	"unsafe"
@@ -21,10 +23,12 @@ type diskCache struct {
 }
 
 type diskCacheEntry struct {
-	Key        string           `json:"key"`
-	Query      string           `json:"query,omitempty"`
-	Context    string           `json:"context,omitempty"`
-	Definition model.Definition `json:"definition"`
+	PromptVersion int              `json:"promptVersion,omitempty"`
+	Key           string           `json:"key"`
+	Query         string           `json:"query,omitempty"`
+	Context       string           `json:"context,omitempty"`
+	Definition    model.Definition `json:"definition"`
+	Count         uint64           `json:"count"`
 }
 
 var historySubscribers = map[int]func([]model.HistoryEntry){}
@@ -45,6 +49,7 @@ func ConfigureCache(exeDir string) error {
 	defer resultCache.Unlock()
 	cacheFile = path
 	resultCache.items = make(map[string]model.Definition)
+	cachePromptVersions = make(map[string]int)
 	resultCache.order = nil
 	historyMeta = make(map[string]model.HistoryEntry)
 	b, err := os.ReadFile(path)
@@ -71,11 +76,16 @@ func ConfigureCache(exeDir string) error {
 		}
 		removeOrderKeyLocked(entry.Key)
 		resultCache.items[entry.Key] = entry.Definition
+		cachePromptVersions[entry.Key] = entry.PromptVersion
 		query := entry.Query
 		if query == "" {
 			query = entry.Definition.Term
 		}
-		historyMeta[entry.Key] = model.HistoryEntry{Key: entry.Key, Query: query, Context: entry.Context, Definition: entry.Definition}
+		count := entry.Count
+		if count == 0 {
+			count = 1
+		}
+		historyMeta[entry.Key] = model.HistoryEntry{Key: entry.Key, Query: query, Context: entry.Context, Definition: entry.Definition, Count: count}
 		resultCache.order = append(resultCache.order, entry.Key)
 	}
 	return saveCacheLocked()
@@ -83,12 +93,27 @@ func ConfigureCache(exeDir string) error {
 
 func storeCached(key string, selection model.Selection, definition model.Definition) {
 	resultCache.Lock()
+	// Preserve distinct senses, while reusing legacy IDs for matching results.
+	identity, _ := json.Marshal([]string{key, strings.ToLower(strings.TrimSpace(definition.PartOfSpeech)), strings.TrimSpace(definition.MeaningZH)})
+	historyKey := fmt.Sprintf("sense:%x", sha256.Sum256(identity))
+	for _, existing := range resultCache.order {
+		entry := historyMeta[existing]
+		if selectionKey(model.Selection{Text: entry.Query, Context: entry.Context}) == key &&
+			strings.EqualFold(strings.TrimSpace(entry.Definition.PartOfSpeech), strings.TrimSpace(definition.PartOfSpeech)) &&
+			strings.TrimSpace(entry.Definition.MeaningZH) == strings.TrimSpace(definition.MeaningZH) {
+			historyKey = existing
+			break
+		}
+	}
+	key = historyKey
 	removeOrderKeyLocked(key)
 	resultCache.items[key] = definition
-	historyMeta[key] = model.HistoryEntry{Key: key, Query: selection.Text, Context: selection.Context, Definition: definition}
+	cachePromptVersions[key] = model.DictionaryPromptVersion
+	historyMeta[key] = model.HistoryEntry{Key: key, Query: selection.Text, Context: selection.Context, Definition: definition, Count: historyMeta[key].Count + 1}
 	resultCache.order = append(resultCache.order, key)
 	for len(resultCache.order) > cacheLimit {
 		delete(resultCache.items, resultCache.order[0])
+		delete(cachePromptVersions, resultCache.order[0])
 		delete(historyMeta, resultCache.order[0])
 		resultCache.order = resultCache.order[1:]
 	}
@@ -96,6 +121,11 @@ func storeCached(key string, selection model.Selection, definition model.Definit
 	snapshot, callbacks := historyNotificationLocked()
 	resultCache.Unlock()
 	notifyHistory(snapshot, callbacks)
+}
+
+// StoreDefinition gives local dictionary results the same history and count behavior.
+func StoreDefinition(selection model.Selection, definition model.Definition) {
+	storeCached(selectionKey(selection), selection, definition)
 }
 
 func History() []model.HistoryEntry {
@@ -125,6 +155,35 @@ func HistoryDefinition(key string) (model.Definition, bool) {
 	return d, ok
 }
 
+// DeleteHistory removes the selected entry from both disk and memory.
+func DeleteHistory(key string) error {
+	resultCache.Lock()
+	definition, exists := resultCache.items[key]
+	if !exists {
+		resultCache.Unlock()
+		return nil
+	}
+	meta := historyMeta[key]
+	promptVersion := cachePromptVersions[key]
+	order := append([]string(nil), resultCache.order...)
+	delete(resultCache.items, key)
+	delete(cachePromptVersions, key)
+	delete(historyMeta, key)
+	removeOrderKeyLocked(key)
+	if err := saveCacheLocked(); err != nil {
+		resultCache.items[key] = definition
+		cachePromptVersions[key] = promptVersion
+		historyMeta[key] = meta
+		resultCache.order = order
+		resultCache.Unlock()
+		return err
+	}
+	snapshot, callbacks := historyNotificationLocked()
+	resultCache.Unlock()
+	notifyHistory(snapshot, callbacks)
+	return nil
+}
+
 func SubscribeHistory(fn func([]model.HistoryEntry)) func() {
 	resultCache.Lock()
 	id := nextSubscriberID
@@ -132,6 +191,26 @@ func SubscribeHistory(fn func([]model.HistoryEntry)) func() {
 	historySubscribers[id] = fn
 	resultCache.Unlock()
 	return func() { resultCache.Lock(); delete(historySubscribers, id); resultCache.Unlock() }
+}
+
+// ClearHistory persists the empty history before notifying the UI.
+func ClearHistory() error {
+	resultCache.Lock()
+	items, order, meta, versions := resultCache.items, resultCache.order, historyMeta, cachePromptVersions
+	resultCache.items = make(map[string]model.Definition)
+	cachePromptVersions = make(map[string]int)
+	resultCache.order = nil
+	historyMeta = make(map[string]model.HistoryEntry)
+	if err := saveCacheLocked(); err != nil {
+		resultCache.items, resultCache.order, historyMeta = items, order, meta
+		cachePromptVersions = versions
+		resultCache.Unlock()
+		return err
+	}
+	snapshot, callbacks := historyNotificationLocked()
+	resultCache.Unlock()
+	notifyHistory(snapshot, callbacks)
+	return nil
 }
 
 func historyLocked() []model.HistoryEntry {
@@ -173,7 +252,7 @@ func saveCacheLocked() error {
 	saved := diskCache{Entries: make([]diskCacheEntry, 0, len(resultCache.order))}
 	for _, key := range resultCache.order {
 		meta := historyMeta[key]
-		saved.Entries = append(saved.Entries, diskCacheEntry{Key: key, Query: meta.Query, Context: meta.Context, Definition: resultCache.items[key]})
+		saved.Entries = append(saved.Entries, diskCacheEntry{PromptVersion: cachePromptVersions[key], Key: key, Query: meta.Query, Context: meta.Context, Definition: resultCache.items[key], Count: meta.Count})
 	}
 	b, err := json.MarshalIndent(saved, "", "  ")
 	if err != nil {

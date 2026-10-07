@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -11,9 +12,13 @@ import (
 
 type Service struct {
 	mu            sync.Mutex
-	clientFactory func() *gemini.Client
+	clientFactory func() Client
 	timeout       time.Duration
 	scopes        map[string]*scopeRequest
+}
+
+type Client interface {
+	Lookup(context.Context, model.Selection) (model.QueryResult, error)
 }
 
 type scopeRequest struct {
@@ -21,17 +26,32 @@ type scopeRequest struct {
 	cancel     context.CancelFunc
 }
 
-func New(clientFactory func() *gemini.Client, timeout time.Duration) *Service {
+func New(clientFactory func() Client, timeout time.Duration) *Service {
 	return &Service{clientFactory: clientFactory, timeout: timeout, scopes: make(map[string]*scopeRequest)}
 }
 
+func (s *Service) Retry(scope string, selection model.Selection, emit func(model.ViewState)) {
+	selection.BypassCache = true
+	s.Lookup(scope, selection, emit)
+}
+
 func (s *Service) Lookup(scope string, selection model.Selection, emit func(model.ViewState)) {
+	originalEmit := emit
+	emit = func(state model.ViewState) {
+		state.Context = selection.Context
+		originalEmit(state)
+	}
+	client := s.clientFactory()
+	timeout := s.timeout
+	if timed, ok := client.(interface{ RequestTimeout() time.Duration }); ok {
+		timeout = timed.RequestTimeout()
+	}
 	s.mu.Lock()
 	current := s.scopes[scope]
 	if current != nil && current.cancel != nil {
 		current.cancel()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	generation := uint64(1)
 	if current != nil {
 		generation = current.generation + 1
@@ -39,10 +59,12 @@ func (s *Service) Lookup(scope string, selection model.Selection, emit func(mode
 	s.scopes[scope] = &scopeRequest{generation: generation, cancel: cancel}
 	s.mu.Unlock()
 
+	// Capture the selected model before starting the background request.
 	emit(model.ViewState{Kind: model.ViewLoading, Selection: selection.Text})
 	go func() {
-		result, err := s.clientFactory().Lookup(ctx, selection)
-		if ctx.Err() != nil || !s.current(scope, generation) {
+		defer cancel()
+		result, err := client.Lookup(ctx, selection)
+		if errors.Is(ctx.Err(), context.Canceled) || !s.current(scope, generation) {
 			return
 		}
 		if err != nil {
@@ -73,7 +95,9 @@ func (s *Service) Cancel(scope string) {
 	delete(s.scopes, scope)
 }
 
-func (s *Service) History() []model.HistoryEntry { return gemini.History() }
+func (s *Service) History() []model.HistoryEntry  { return gemini.History() }
+func (s *Service) DeleteHistory(key string) error { return gemini.DeleteHistory(key) }
+func (s *Service) ClearHistory() error            { return gemini.ClearHistory() }
 func (s *Service) SubscribeHistory(fn func([]model.HistoryEntry)) func() {
 	return gemini.SubscribeHistory(fn)
 }
