@@ -75,14 +75,14 @@ func (c *Client) Lookup(ctx context.Context, s model.Selection) (model.QueryResu
 			return model.QueryResult{Definition: &cached}, nil
 		}
 	}
-	schema := map[string]any{"type": "OBJECT", "required": []string{"type", "kind", "term", "partOfSpeech", "meaningZh", "exampleEn", "exampleZh", "suggestions"}, "properties": map[string]any{
+	schema := map[string]any{"type": "OBJECT", "required": []string{"type", "kind", "term", "partOfSpeech", "meaningZh", "learningZh", "exampleZhMatch", "exampleEn", "exampleZh", "suggestions"}, "properties": map[string]any{
 		"type": map[string]any{"type": "STRING", "enum": []string{"definition", "suggestions"}},
 		"kind": map[string]any{"type": "STRING"},
 		"term": map[string]string{"type": "STRING"}, "partOfSpeech": map[string]string{"type": "STRING"},
-		"meaningZh": map[string]string{"type": "STRING"}, "exampleEn": map[string]string{"type": "STRING"}, "exampleZh": map[string]string{"type": "STRING"},
+		"learningZh": map[string]string{"type": "STRING"}, "exampleZhMatch": map[string]string{"type": "STRING"}, "meaningZh": map[string]string{"type": "STRING"}, "exampleEn": map[string]string{"type": "STRING"}, "exampleZh": map[string]string{"type": "STRING"},
 		"suggestions": map[string]any{"type": "ARRAY", "items": map[string]string{"type": "STRING"}},
 	}}
-	system := model.ContextualDictionaryInstructions + "\nUse American English. Return type=definition for valid selections. If likely misspelled, return type=suggestions with up to five likely English corrections; all definition fields must be empty. For kind=term, partOfSpeech is an appropriate abbreviation such as n., v., adj., adv., phr., idiom, nc or nu, and exampleEn must contain the exact selected term. For kind=sentence, return empty partOfSpeech, exampleEn and exampleZh. Preserve selection exactly in term."
+	system := model.ContextualDictionaryInstructions + "\n" + model.LearningInstructions + "\nUse American English. Return type=definition for valid selections. If likely misspelled, return type=suggestions with up to five likely English corrections; all definition fields must be empty. For kind=term, partOfSpeech is an appropriate abbreviation such as n., v., adj., adv., phr., idiom, nc or nu, and exampleEn must contain the exact selected term. For kind=sentence, return empty partOfSpeech, exampleEn and exampleZh. Preserve selection exactly in term."
 	prompt := fmt.Sprintf("<selection>%s</selection>\n<context>%s</context>", xmlEscape(limitRunes(s.Text, 300)), xmlEscape(limitRunes(s.Context, 1200)))
 	config := generationConfig{Temperature: 0.2, ResponseMimeType: "application/json", ResponseSchema: schema, MaxOutputTokens: 2048}
 	body := apiRequest{Contents: []content{{Parts: []part{{Text: prompt}}}}, SystemInstruction: &content{Parts: []part{{Text: system}}}, GenerationConfig: config}
@@ -175,9 +175,11 @@ func (c *Client) Lookup(ctx context.Context, s model.Selection) (model.QueryResu
 	d.Kind = clean(d.Kind, 20)
 	d.PartOfSpeech = clean(d.PartOfSpeech, 30)
 	d.MeaningZH = clean(d.MeaningZH, 500)
+	d.LearningZH = clean(d.LearningZH, 800)
+	d.ExampleZHMatch = clean(d.ExampleZHMatch, 500)
 	d.ExampleEN = clean(d.ExampleEN, 500)
 	d.ExampleZH = clean(d.ExampleZH, 500)
-	if d.Term == "" || d.MeaningZH == "" {
+	if d.Term == "" || d.MeaningZH == "" || !model.DefinitionHasLearning(d) {
 		return model.QueryResult{}, errors.New("词典结果不完整，请重试")
 	}
 	if d.Kind != "sentence" && (d.PartOfSpeech == "" || d.ExampleEN == "" || d.ExampleZH == "") {

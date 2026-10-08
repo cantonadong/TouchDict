@@ -5,10 +5,27 @@
  const text=(id,value)=>{const content=value||"";if($(id).textContent!==content)$(id).textContent=content};
  const show=(id,value)=>{$(id).hidden=!value};
  let snapshot=null,lastHeight=-1,frame=0,toastTimer;
- function measure(){cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{const content=$("result-content"),footer=document.querySelector(".result-footer");const height=Math.ceil(content.scrollHeight+footer.offsetHeight+48);if(height!==lastHeight){lastHeight=height;send("content-height",{height})}})}
+ function measure(){cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{const content=$("result-content"),footer=document.querySelector(".result-footer");const cardStyle=getComputedStyle(document.querySelector(".popup-card")),footerStyle=getComputedStyle(footer);const height=Math.ceil(content.scrollHeight+footer.offsetHeight+parseFloat(cardStyle.paddingTop)+parseFloat(cardStyle.paddingBottom)+parseFloat(footerStyle.marginTop));if(height!==lastHeight){lastHeight=height;send("content-height",{height})}})}
+  function highlight(id, value, query) {
+    const node = $(id), content = value || "", needle = (query || "").trim();
+    const signature = JSON.stringify([content, needle]);
+    if (node.dataset.highlight === signature) return;
+    node.dataset.highlight = signature;
+    node.replaceChildren();
+    const lower = content.toLowerCase(), match = needle.toLowerCase();
+    let offset = 0, index;
+    while (match && (index = lower.indexOf(match, offset)) !== -1) {
+      node.append(document.createTextNode(content.slice(offset, index)));
+      const mark = document.createElement("mark");
+      mark.textContent = content.slice(index, index + needle.length);
+      node.append(mark);
+      offset = index + needle.length;
+    }
+    node.append(document.createTextNode(content.slice(offset)));
+  }
  function context(sentence,query){const node=$("context-sentence"),signature=JSON.stringify([sentence,query]);show("context-card",!!sentence);if(node.dataset.signature===signature)return;node.dataset.signature=signature;node.replaceChildren();const lower=sentence.toLowerCase(),needle=query.trim().toLowerCase();let offset=0,index;while(needle&&(index=lower.indexOf(needle,offset))!==-1){node.append(document.createTextNode(sentence.slice(offset,index)));const mark=document.createElement("mark");mark.textContent=sentence.slice(index,index+needle.length);node.append(mark);offset=index+needle.length}node.append(document.createTextNode(sentence.slice(offset)))}
  window.touchdict={
-  applyState(data){snapshot=data;const state=data.state,kind=state.Kind,d=state.Definition||{},empty=kind===0||kind===3;show("welcome",empty);show("definition",!empty);text("welcome-message",state.Message);text("term",kind===2?d.term:state.Selection);text("pos",d.partOfSpeech);show("pos",kind===2&&!!d.partOfSpeech);context(state.Context||"",state.Selection||d.term||"");show("loading",kind===1);text("meaning",d.meaningZh);show("meaning-card",kind===2&&!!d.meaningZh);text("example",d.exampleEn);text("translation",d.exampleZh);show("example-card",kind===2&&!!(d.exampleEn||d.exampleZh));show("translation",kind===2&&!!d.exampleZh);show("copy",kind===2&&!!d.exampleEn);text("error",state.Message);show("error",kind===4);text("status",state.Message);show("status",kind===2&&!!state.Message);show("suggestion-card",kind===5);const suggestions=$("suggestions");suggestions.replaceChildren();for(const value of state.Suggestions||[]){const button=document.createElement("button");button.textContent=value;button.onclick=()=>send("lookup",{text:value});suggestions.append(button)}$("speak").disabled=kind!==2;$("retry").disabled=!((state.Selection||d.term||"").trim());$("pin").setAttribute("aria-pressed",String(data.pinned));text("pin-text",data.pinned?"\u53d6\u6d88\u56fa\u9876":"\u56fa\u9876");document.documentElement.style.setProperty("--term-size",`${data.termSize}pt`);document.documentElement.style.setProperty("--content-size",`${data.contentSize}pt`);measure()},
+  applyState(data){snapshot=data;const state=data.state,kind=state.Kind,d=state.Definition||{},empty=kind===0||kind===3;show("welcome",empty);show("definition",!empty);text("welcome-message",state.Message);text("term",kind===2?d.term:state.Selection);text("pos",d.partOfSpeech);show("pos",kind===2&&!!d.partOfSpeech);context(state.Context||"",state.Selection||d.term||"");show("loading",kind===1);text("meaning",d.meaningZh);show("meaning-card",kind===2&&!!d.meaningZh);text("learning-text",d.learningZh);show("learning",kind===2&&!!d.learningZh);highlight("example",d.exampleEn,d.term);highlight("translation",d.exampleZh,d.exampleZhMatch);show("example-card",kind===2&&!!(d.exampleEn||d.exampleZh));show("translation",kind===2&&!!d.exampleZh);show("copy",kind===2&&!!d.exampleEn);text("error",state.Message);show("error",kind===4);text("status",state.Message);show("status",kind===2&&!!state.Message);show("suggestion-card",kind===5);const suggestions=$("suggestions");suggestions.replaceChildren();for(const value of state.Suggestions||[]){const button=document.createElement("button");button.textContent=value;button.onclick=()=>send("lookup",{text:value});suggestions.append(button)}$("speak").disabled=kind!==2;$("retry").disabled=!((state.Selection||d.term||"").trim());$("pin").setAttribute("aria-pressed",String(data.pinned));text("pin-text",data.pinned?"\u53d6\u6d88\u56fa\u9876":"\u56fa\u9876");document.documentElement.style.setProperty("--term-size",`${data.termSize}px`);document.documentElement.style.setProperty("--content-size",`${data.contentSize}px`);measure()},
   beginEdit(){show("term-edit",true);show("term",false);$("term-edit").value=$("term").textContent;$("term-edit").focus();$("term-edit").select();measure()},
   endEdit(){show("term-edit",false);show("term",true);measure()},
   notice(){clearTimeout(toastTimer);show("toast",true);toastTimer=setTimeout(()=>show("toast",false),2000)}

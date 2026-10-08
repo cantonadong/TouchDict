@@ -58,17 +58,17 @@ func (c *Client) Lookup(ctx context.Context, selection model.Selection) (model.Q
 		return model.QueryResult{}, localError(err)
 	}
 	properties := map[string]any{}
-	for _, field := range []string{"kind", "term", "partOfSpeech", "meaningZh", "exampleEn", "exampleZh"} {
+	for _, field := range []string{"kind", "term", "partOfSpeech", "meaningZh", "learningZh", "exampleZhMatch", "exampleEn", "exampleZh"} {
 		properties[field] = map[string]any{"type": "string", "minLength": 1}
 	}
 	properties["type"] = map[string]any{"type": "string", "enum": []string{"definition"}}
 	properties["term"] = map[string]any{"type": "string", "enum": []string{trim(selection.Text, 300)}}
 	properties["kind"] = map[string]any{"type": "string", "enum": []string{"term", "sentence"}}
 	properties["suggestions"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
-	schema := map[string]any{"type": "object", "properties": properties, "required": []string{"type", "kind", "term", "partOfSpeech", "meaningZh", "exampleEn", "exampleZh", "suggestions"}, "additionalProperties": false}
+	schema := map[string]any{"type": "object", "properties": properties, "required": []string{"type", "kind", "term", "partOfSpeech", "meaningZh", "learningZh", "exampleZhMatch", "exampleEn", "exampleZh", "suggestions"}, "additionalProperties": false}
 	// A single user turn works with both Gemma and Qwen chat templates.
-	prompt := model.ContextualDictionaryInstructions + "\n\nReturn one JSON object matching the schema. All six string fields must be nonempty: term is exactly selection; partOfSpeech is an abbreviation (n., v., adj., adv., phr.; sent. for a selected sentence); meaningZh is the selected term's Chinese meaning; exampleEn is one SHORT natural English example using the selected term in this sense; exampleZh is its accurate Chinese translation. type=definition; kind=term for a word or phrase, kind=sentence only for a complete selected sentence; suggestions=[]. For a selected sentence, still provide an English example and Chinese translation.\n<selection>" + escape(trim(selection.Text, 300)) + "</selection>\n<context>" + escape(trim(selection.Context, 1200)) + "</context>"
-	payload := map[string]any{"messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "max_tokens": 768, "stream": false,
+	prompt := model.ContextualDictionaryInstructions + "\n" + model.LearningInstructions + "\n\nReturn one JSON object matching the schema. All string fields must be nonempty: term is exactly selection; partOfSpeech is an abbreviation (n., v., adj., adv., phr.; sent. for a selected sentence); meaningZh is the selected term's Chinese meaning; exampleEn is one SHORT natural English example using the selected term in this sense; exampleZh is its accurate Chinese translation. type=definition; kind=term for a word or phrase, kind=sentence only for a complete selected sentence; suggestions=[]. For a selected sentence, still provide an English example and Chinese translation.\n<selection>" + escape(trim(selection.Text, 300)) + "</selection>\n<context>" + escape(trim(selection.Context, 1200)) + "</context>"
+	payload := map[string]any{"messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "max_tokens": 1536, "stream": false,
 		"response_format": map[string]any{"type": "json_object", "schema": schema}}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -137,9 +137,11 @@ func (c *Client) Lookup(ctx context.Context, selection model.Selection) (model.Q
 		return model.QueryResult{Suggestions: suggestions}, nil
 	}
 	d := answer.Definition
+	d.LearningZH = trim(d.LearningZH, 800)
+	d.ExampleZHMatch = trim(d.ExampleZHMatch, 500)
 	d.Term, d.Kind, d.PartOfSpeech = trim(d.Term, 300), trim(d.Kind, 20), trim(d.PartOfSpeech, 30)
 	d.MeaningZH, d.ExampleEN, d.ExampleZH = trim(d.MeaningZH, 500), trim(d.ExampleEN, 500), trim(d.ExampleZH, 500)
-	if answer.Type != "definition" || d.Term == "" || d.MeaningZH == "" || d.PartOfSpeech == "" || d.ExampleEN == "" || d.ExampleZH == "" {
+	if answer.Type != "definition" || d.Term == "" || d.MeaningZH == "" || !model.DefinitionHasLearning(d) || d.PartOfSpeech == "" || d.ExampleEN == "" || d.ExampleZH == "" {
 		return model.QueryResult{}, errors.New("本地模型返回的释义不完整，请重试或切换模型")
 	}
 	if !model.DefinitionMatchesSelection(selection, d) {

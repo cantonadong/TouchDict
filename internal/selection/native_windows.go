@@ -21,7 +21,7 @@ import (
 
 type contextDetails struct {
 	model.SelectionBounds
-	Context, Diagnostic string
+	Text, Context, Diagnostic string
 }
 
 var (
@@ -117,10 +117,6 @@ func RunContextHelper() {
 
 func captureNative(expected string, x, y int32) contextDetails {
 	details := contextDetails{Diagnostic: "native UIA: no text provider"}
-	if strings.TrimSpace(expected) == "" {
-		details.Diagnostic = "native UIA: empty selection"
-		return details
-	}
 	// Match in the original string: Unicode case conversion can change byte
 	// lengths, making a lowercased-string index invalid in the original name.
 	nameMatch := regexp.MustCompile("(?i)" + regexp.QuoteMeta(expected))
@@ -173,7 +169,7 @@ func captureNative(expected string, x, y int32) contextDetails {
 				return details
 			}
 		}
-		if details.Context == "" {
+		if expected != "" && details.Context == "" {
 			var bounds struct{ Left, Top, Right, Bottom int32 }
 			if uiaOK(element.call(43, uintptr(unsafe.Pointer(&bounds)))) && x >= bounds.Left && x < bounds.Right && y >= bounds.Top && y < bounds.Bottom {
 				name := element.text(23)
@@ -214,11 +210,27 @@ func capturePattern(pattern *uiaObject, expected string, packedPoint uintptr, de
 		if uiaOK(array.call(3, uintptr(unsafe.Pointer(&count)))) {
 			for i := int32(0); i < count && i < 16; i++ {
 				if r := array.object(4, uintptr(i)); r != nil {
+					if expected == "" {
+						selected := normalize(r.text(12, 4096))
+						if selected != "" && hasLatin(selected) && len([]rune(selected)) <= 300 {
+							details.Text = selected
+							captureRange(r, selected, details)
+							details.Diagnostic = "native UIA: selected text"
+							r.release()
+							array.release()
+							return true
+						}
+					}
 					ranges = append(ranges, r)
 				}
 			}
 		}
 		array.release()
+	}
+	// With no clipboard text, accept only an actual nonempty selection.
+	// Do not infer a query from the node name or the document contents.
+	if expected == "" {
+		return false
 	}
 	if r := pattern.object(3, packedPoint); r != nil {
 		if uiaOK(r.call(6, 2)) {

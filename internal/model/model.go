@@ -12,12 +12,14 @@ type Selection struct {
 type SelectionBounds struct{ Left, Top, Right, Bottom int }
 
 type Definition struct {
-	Kind         string `json:"kind"`
-	Term         string `json:"term"`
-	PartOfSpeech string `json:"partOfSpeech"`
-	MeaningZH    string `json:"meaningZh"`
-	ExampleEN    string `json:"exampleEn"`
-	ExampleZH    string `json:"exampleZh"`
+	Kind           string `json:"kind"`
+	Term           string `json:"term"`
+	PartOfSpeech   string `json:"partOfSpeech"`
+	MeaningZH      string `json:"meaningZh"`
+	LearningZH     string `json:"learningZh"`
+	ExampleZHMatch string `json:"exampleZhMatch"`
+	ExampleEN      string `json:"exampleEn"`
+	ExampleZH      string `json:"exampleZh"`
 }
 
 type QueryResult struct {

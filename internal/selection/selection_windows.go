@@ -5,6 +5,7 @@ package selection
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"syscall"
 	"time"
@@ -58,30 +59,51 @@ func (r *Reader) Read(ctx context.Context, hoverMode bool, points ...walk.Point)
 		defer func() { _ = clip.SetText(old) }()
 	}
 	waitModifiersReleased(ctx)
+	if ctx.Err() != nil {
+		return model.Selection{}, ctx.Err()
+	}
 	var text string
+	readSelected := func() string {
+		selected := copySelection(ctx, clip, 700*time.Millisecond)
+		if selected != "" || ctx.Err() != nil {
+			return selected
+		}
+		if r.Diagnostics != nil {
+			hwnd := win.GetForegroundWindow()
+			var processID uint32
+			win.GetWindowThreadProcessId(hwnd, &processID)
+			r.Diagnostics(fmt.Sprintf("clipboard capture failed: foreground=%x pid=%d", hwnd, processID))
+		}
+		details := readNativeDetails(ctx, "", pointer)
+		if r.Diagnostics != nil {
+			r.Diagnostics("selection fallback: " + details.Diagnostic)
+		}
+		return details.Text
+	}
 	if hoverMode {
 		// Preserve a selection made by dragging the mouse. A precision
 		// touchpad's three-finger Alt gesture must not replace it with the
 		// single word under the pointer.
-		text = copySelection(ctx, clip, 160*time.Millisecond)
+		text = readSelected()
 		if text == "" {
 			doubleClick()
 			time.Sleep(90 * time.Millisecond)
-			text = copySelection(ctx, clip, 900*time.Millisecond)
+			text = readSelected()
 			if text == "" {
 				return model.Selection{}, errors.New("未能从 Chrome 读取选中的英文内容")
 			}
 		}
 	} else {
-		text = copySelection(ctx, clip, 420*time.Millisecond)
+		text = readSelected()
 	}
 	if text == "" {
 		// A double click selects the word under the pointer in browsers and
 		// most native text controls. Existing manual selections are tried first.
 		doubleClick()
 		time.Sleep(90 * time.Millisecond)
-		text = copySelection(ctx, clip, 800*time.Millisecond)
+		text = readSelected()
 	}
+	originalText := text
 	text = normalize(text)
 	if text == "" {
 		return model.Selection{}, errors.New("鼠标下没有可读取的英文单词")
@@ -93,6 +115,14 @@ func (r *Reader) Read(ctx context.Context, hoverMode bool, points ...walk.Point)
 		text = string([]rune(text)[:300])
 	}
 	bounds, sentence, diagnostic := readSelectionDetails(ctx, text, pointer)
+	if sentence == "" && ctx.Err() == nil {
+		if fallback, detail := readWPSContext(ctx, clip, originalText); detail != "" {
+			diagnostic += "; " + detail
+			if fallback != "" {
+				sentence = fallback
+			}
+		}
+	}
 	if r.Diagnostics != nil {
 		r.Diagnostics("context capture: " + diagnostic)
 	}
@@ -120,11 +150,18 @@ func sendClick() bool {
 }
 
 func copySelection(ctx context.Context, clip *walk.ClipboardService, timeout time.Duration) string {
+	if ctx.Err() != nil {
+		return ""
+	}
 	before, _, _ := getClipboardSequenceNumber.Call()
-	keybdEvent.Call(vkCtrl, 0, 0, 0)
-	keybdEvent.Call(vkC, 0, 0, 0)
-	keybdEvent.Call(vkC, 0, keyUp, 0)
-	keybdEvent.Call(vkCtrl, 0, keyUp, 0)
+	copyKeys := func() {
+		keybdEvent.Call(vkCtrl, 0, 0, 0)
+		keybdEvent.Call(vkC, 0, 0, 0)
+		keybdEvent.Call(vkC, 0, keyUp, 0)
+		keybdEvent.Call(vkCtrl, 0, keyUp, 0)
+	}
+	copyKeys()
+	retryAt := time.Now().Add(200 * time.Millisecond)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -137,6 +174,12 @@ func copySelection(ctx context.Context, clip *walk.ClipboardService, timeout tim
 		if sequence != before && e == nil && strings.TrimSpace(v) != "" {
 			return v
 		}
+		// A browser may still be handling the trigger key when the first
+		// copy arrives. Retry without changing the user's existing selection.
+		if sequence == before && time.Now().After(retryAt) {
+			copyKeys()
+			retryAt = time.Now().Add(200 * time.Millisecond)
+		}
 	}
 	return ""
 }
@@ -146,7 +189,8 @@ func waitModifiersReleased(ctx context.Context) {
 	for time.Now().Before(deadline) {
 		ctrl, _, _ := getAsyncKeyState.Call(vkCtrl)
 		alt, _, _ := getAsyncKeyState.Call(vkAlt)
-		if ctrl&0x8000 == 0 && alt&0x8000 == 0 {
+		shift, _, _ := getAsyncKeyState.Call(0x10)
+		if ctrl&0x8000 == 0 && alt&0x8000 == 0 && shift&0x8000 == 0 {
 			return
 		}
 		select {

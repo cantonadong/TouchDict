@@ -203,7 +203,7 @@ func main() {
 				mainWin.Update(model.ViewState{Kind: model.ViewError, Selection: text, Message: err.Error()})
 			}
 		},
-		InitialTermSize: 30,
+		InitialTermSize: 24,
 		InitialHeight:   cfg.MainWindowHeight,
 		HeightChanged: func(height int) {
 			cfg.MainWindowHeight = height
@@ -211,7 +211,7 @@ func main() {
 				logger.Printf("save main window height failed: %v", err)
 			}
 		},
-		InitialContentSize: 12,
+		InitialContentSize: 16,
 		TermSizeChanged:    func(size int) { win.SetTermSize(size) },
 		ContentSizeChanged: func(size int) { win.SetContentSize(size) },
 	})
@@ -344,7 +344,7 @@ func main() {
 			wasCanceled := ctx.Err() != nil
 			c()
 			if e != nil {
-				logger.Printf("capture failed source=%s error=%T", event.Source, e)
+				logger.Printf("capture failed source=%s error=%v", event.Source, e)
 				if !wasCanceled {
 					win.MW.Synchronize(func() {
 						var p point

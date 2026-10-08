@@ -1,12 +1,12 @@
 body { background: #f7f9fc; }
-.popup-card { display:flex; flex-direction:column; height:100vh; min-height:0; padding:18px; }
+.popup-card { display:flex; flex-direction:column; height:100vh; min-height:0; padding:16px; }
 #result-scroll { overflow:auto; flex:1; min-height:0; scrollbar-gutter:auto; }
 #result-content { padding:0 0 8px; }
-.term-heading { margin-bottom:10px; }
-#term-edit { border:1px solid var(--blue); background:white; border-radius:10px; padding:8px 12px; height:auto; font-size:var(--content-size); }
+.term-heading { margin-bottom:12px; }
+#term-edit { border:1px solid var(--blue); background:white; border-radius:10px; padding:8px 12px; height:auto; font-size:var(--term-size); font-weight:700; line-height:1.2; }
 .pos { margin:0 0 8px; }
-.card { padding:16px 18px; margin-top:14px; }
-.result-footer { margin:12px 0 0; padding:10px; gap:8px; flex-shrink:0; }
-.result-footer button { min-width:80px; padding:9px 10px; }
-.primary-actions { gap:8px; }
+.card { padding:16px; margin-top:12px; }
+.popup-card .result-footer { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; margin:12px 0 0; padding:12px 0 0; gap:8px; border:0; border-top:1px solid var(--divider); border-radius:0; background:transparent; flex-shrink:0; }
+.popup-card .result-footer button { min-width:0; height:40px; min-height:40px; padding:7px 10px; }
+.popup-card .primary-actions { flex-wrap:nowrap; gap:8px; }
 .toast { bottom:88px; }

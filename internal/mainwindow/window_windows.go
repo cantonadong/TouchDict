@@ -68,7 +68,7 @@ func New(c Callbacks) (*Window, error) {
 	mw.SetSizePixels(walk.Size{Width: 1800, Height: height})
 	mw.SetSizePixels(walk.Size{Width: windowHeightForScreenPixels(mw, 1800), Height: windowHeightForScreenPixels(mw, height)})
 	mw.SetMinMaxSizePixels(walk.Size{Width: 820, Height: 560}, walk.Size{})
-	w := &Window{MW: mw, callbacks: c, userHeight: height, termSize: fontSize(c.InitialTermSize, 30), contentSize: fontSize(c.InitialContentSize, 12), state: model.ViewState{Kind: model.ViewEmpty, Message: "在顶部输入英文开始查询"}}
+	w := &Window{MW: mw, callbacks: c, userHeight: height, termSize: fontSize(c.InitialTermSize, 24), contentSize: fontSize(c.InitialContentSize, 16), state: model.ViewState{Kind: model.ViewEmpty, Message: "在顶部输入英文开始查询"}}
 	// Walk's FormBase.startLayout always measures its client Composite when
 	// showing the window. ContainerBase.CreateLayoutItem dereferences Layout(),
 	// even though the visible content is supplied by WebView2 rather than Walk.
@@ -219,9 +219,9 @@ func fontSize(size, fallback int) int {
 }
 
 func (w *Window) changeSizes(delta int, reset bool) {
-	term, content := fontSize(w.termSize+delta, 30), fontSize(w.contentSize+delta, 12)
+	term, content := fontSize(w.termSize+delta, 24), fontSize(w.contentSize+delta, 16)
 	if reset {
-		term, content = 30, 12
+		term, content = 24, 16
 	}
 	if term != w.termSize {
 		w.termSize = term

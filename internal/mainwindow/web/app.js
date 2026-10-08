@@ -102,6 +102,23 @@
     send("history-select", { key });
   }
 
+  function highlight(id, value, query) {
+    const node = $(id), content = value || "", needle = (query || "").trim();
+    const signature = JSON.stringify([content, needle]);
+    if (node.dataset.highlight === signature) return;
+    node.dataset.highlight = signature;
+    node.replaceChildren();
+    const lower = content.toLowerCase(), match = needle.toLowerCase();
+    let offset = 0, index;
+    while (match && (index = lower.indexOf(match, offset)) !== -1) {
+      node.append(document.createTextNode(content.slice(offset, index)));
+      const mark = document.createElement("mark");
+      mark.textContent = content.slice(index, index + needle.length);
+      node.append(mark);
+      offset = index + needle.length;
+    }
+    node.append(document.createTextNode(content.slice(offset)));
+  }
   function renderContext(sentence, query) {
     const element = $("context-sentence");
     const signature = JSON.stringify([sentence, query]);
@@ -134,8 +151,10 @@
     show("loading", kind === 1);
     text("meaning", kind === 2 ? definition.meaningZh : "");
     show("meaning-card", kind === 2 && !!definition.meaningZh);
-    text("example", kind === 2 ? definition.exampleEn : "");
-    text("translation", kind === 2 ? definition.exampleZh : "");
+    text("learning-text", kind === 2 ? definition.learningZh : "");
+    show("learning", kind === 2 && !!definition.learningZh);
+    highlight("example", kind === 2 ? definition.exampleEn : "", definition.term);
+    highlight("translation", kind === 2 ? definition.exampleZh : "", definition.exampleZhMatch);
     show("example-card", kind === 2 && (!!definition.exampleEn || !!definition.exampleZh));
     show("translation", kind === 2 && !!definition.exampleZh);
     show("copy", kind === 2 && !!definition.exampleEn);
@@ -171,8 +190,8 @@
       selectedKey = state.selectedKey;
       renderHistory(state.history || []);
       renderResult(state.state);
-      document.documentElement.style.setProperty("--term-size", `${state.termSize}pt`);
-      document.documentElement.style.setProperty("--content-size", `${state.contentSize}pt`);
+      document.documentElement.style.setProperty("--term-size", `${state.termSize}px`);
+      document.documentElement.style.setProperty("--content-size", `${state.contentSize}px`);
       $("pin").setAttribute("aria-pressed", String(state.pinned));
       text("pin-text", state.pinned ? "取消固顶" : "固顶");
       buttons();

@@ -80,7 +80,7 @@ func New(c Callbacks) (*Window, error) {
 		mw.Dispose()
 		return nil, err
 	}
-	w := &Window{MW: mw, callbacks: c, onHide: c.Hidden, lookup: c.Lookup, termSize: 30, contentSize: 12, state: model.ViewState{Kind: model.ViewEmpty}}
+	w := &Window{MW: mw, callbacks: c, onHide: c.Hidden, lookup: c.Lookup, termSize: 24, contentSize: 16, state: model.ViewState{Kind: model.ViewEmpty}}
 	if err := w.trackGeometry(); err != nil {
 		mw.Dispose()
 		return nil, err
