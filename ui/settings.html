@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<title>TouchDict 设置</title><!-- STYLE --></head><body>
+<dialog id="settings-dialog" tabindex="-1"><div class="settings-layout">
+ <main><section><h2>OpenAI 账号</h2><div class="settings-box account-box">
+  <div class="account-row"><span id="account-name"></span><button id="auth-badge" class="account-action">连接</button></div>
+  <div class="model-row"><label for="model">模型</label><button id="refresh-models" aria-label="刷新模型列表">↻</button><select id="model"><option value="">请先连接账号</option></select></div>
+ </div></section>
+ <section><h2>查询设置</h2><div class="settings-box query-box">
+  <label class="toggle-row"><span>三指点按</span><input id="gesture-enabled" type="checkbox" role="switch" checked></label>
+  <label class="toggle-row"><span>左 Alt</span><input id="alt-enabled" type="checkbox" role="switch" checked></label>
+  <label class="toggle-row"><span>Ctrl + Alt + D</span><input id="hotkey-enabled" type="checkbox" role="switch" checked></label>
+  <label class="toggle-row"><span>自动发音</span><input id="auto-speak" type="checkbox" role="switch" checked></label>
+  <label class="toggle-row"><span>开机启动</span><input id="startup-enabled" type="checkbox" role="switch" checked></label>
+ </div></section>
+ <footer><button id="save-settings">保存</button><button id="cancel-settings">取消</button></footer></main>
+</div></dialog><!-- SCRIPT --></body></html>

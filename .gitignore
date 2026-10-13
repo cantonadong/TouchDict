@@ -4,3 +4,4 @@
 gemini_key.txt
 *.tmp
 .superpowers/
+/target/

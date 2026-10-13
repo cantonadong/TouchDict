@@ -13,8 +13,8 @@
           <div id="result-content">
             <section id="welcome" class="welcome"><span class="welcome-icon"><svg><use href="#i-book"/></svg></span><h1>今天，学一个新表达</h1><p id="welcome-message">在顶部输入英文开始查询</p><div class="welcome-hints"><span>单词释义</span><span>短语理解</span><span>句子翻译</span></div></section>
             <section id="definition" hidden>
-              <div class="term-heading"><h1 id="term" title="Double click to edit"></h1><input id="term-edit" hidden aria-label="Edit query"></div>
-              <div id="pos" class="pos" hidden></div>
+              <div class="term-heading"><h1 id="term" title="Double click to edit"></h1><input id="term-edit" hidden aria-label="输入英文单词或短语" placeholder="输入单词或短语，按 Enter 查询" maxlength="300" autocomplete="off"></div>
+              <div id="term-meta" class="term-meta" hidden><span id="pos" class="pos" hidden></span><span id="phonetic" class="phonetic" hidden></span></div>
               <div id="loading" class="loading" hidden><span class="spinner"></span><span>正在查询，请稍候…</span></div>
               <section id="context-card" class="card context-card" hidden><h2>原句</h2><div id="context-sentence" class="body-text english"></div></section>
               <section id="meaning-card" class="card meaning-card" hidden><h2>释义</h2><div id="meaning" class="body-text"></div><div id="learning" class="learning" hidden><div class="learning-label">理解与用法</div><div id="learning-text" class="body-text"></div></div></section>

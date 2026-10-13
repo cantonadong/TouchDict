@@ -1,0 +1,39 @@
+[package]
+name = "touchdict"
+version = "1.6.0"
+edition = "2024"
+build = "build.rs"
+
+[[bin]]
+name = "TouchDict"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "system-proxy"] }
+jsonwebtoken = "9"
+tao = "0.34"
+wry = "0.57"
+tray-icon = "0.21"
+arboard = "3"
+image = { version = "0.25", default-features = false, features = ["ico"] }
+rfd = "0.15"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Com", "Win32_System_WinRT", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Media_Speech", "Win32_Graphics_Gdi", "Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[patch.crates-io]
+webview2-com-sys = { path = "vendor/webview2-com-sys" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

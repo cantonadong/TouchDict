@@ -146,8 +146,12 @@
     text("welcome-message", state.Message || "在顶部输入英文开始查询");
     text("term", kind === 2 ? definition.term : state.Selection);
     // Definition uses its existing JSON field tags; ViewState retains Go names.
+    const phonetic = definition.kind === "term" && (definition.term || "").trim().split(/\s+/).length === 1 ? definition.phonetic : "";
     text("pos", kind === 2 ? definition.partOfSpeech : "");
+    text("phonetic", kind === 2 ? phonetic : "");
     show("pos", kind === 2 && !!definition.partOfSpeech);
+    show("phonetic", kind === 2 && !!phonetic);
+    show("term-meta", kind === 2 && !!(definition.partOfSpeech || phonetic));
     show("loading", kind === 1);
     text("meaning", kind === 2 ? definition.meaningZh : "");
     show("meaning-card", kind === 2 && !!definition.meaningZh);
