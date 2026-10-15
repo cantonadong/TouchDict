@@ -15,6 +15,7 @@ type Definition struct {
 	Kind           string `json:"kind"`
 	Term           string `json:"term"`
 	PartOfSpeech   string `json:"partOfSpeech"`
+	Phonetic       string `json:"phonetic"`
 	MeaningZH      string `json:"meaningZh"`
 	LearningZH     string `json:"learningZh"`
 	ExampleZHMatch string `json:"exampleZhMatch"`

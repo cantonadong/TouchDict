@@ -130,7 +130,7 @@ impl History {
             .iter()
             .rev()
             .find(|e| {
-                e.prompt_version == 6
+                e.prompt_version == 7
                     && e.query.eq_ignore_ascii_case(&s.text)
                     && e.context == s.context
             })
@@ -167,7 +167,7 @@ impl History {
             context: s.context.clone(),
             definition: d,
             count,
-            prompt_version: 6,
+            prompt_version: 7,
         });
         if self.entries.len() > 500 {
             self.entries.drain(..self.entries.len() - 500);

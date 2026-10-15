@@ -24,7 +24,7 @@ func readSelectionDetails(parent context.Context, selectedText string, pointer w
 	return &details.SelectionBounds, normalize(details.Context), details.Diagnostic
 }
 
-func readNativeDetails(parent context.Context, selectedText string, pointer win.POINT) contextDetails {
+func readNativeDetails(parent context.Context, selectedText string, pointer win.POINT, hover ...bool) contextDetails {
 	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
 	defer cancel()
 	executable, err := os.Executable()
@@ -33,6 +33,11 @@ func readNativeDetails(parent context.Context, selectedText string, pointer win.
 	}
 	cmd := exec.CommandContext(ctx, executable, "--read-selection-context")
 	cmd.Env = append(os.Environ(), "TOUCHDICT_SELECTION="+selectedText, fmt.Sprintf("TOUCHDICT_POINTER_X=%d", pointer.X), fmt.Sprintf("TOUCHDICT_POINTER_Y=%d", pointer.Y))
+	if len(hover) > 0 && hover[0] {
+		cmd.Env = append(cmd.Env, "TOUCHDICT_HOVER_MODE=1")
+	} else {
+		cmd.Env = append(cmd.Env, "TOUCHDICT_HOVER_MODE=0")
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	output, err := cmd.Output()
 	if err != nil {

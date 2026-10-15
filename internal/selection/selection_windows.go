@@ -53,6 +53,9 @@ func (r *Reader) Read(ctx context.Context, hoverMode bool, points ...walk.Point)
 	if len(points) > 0 {
 		pointer.X, pointer.Y = int32(points[0].X), int32(points[0].Y)
 	}
+	if hoverMode {
+		return r.readHover(ctx, pointer)
+	}
 	clip := walk.Clipboard()
 	old, oldErr := clip.Text()
 	if oldErr == nil {
@@ -80,22 +83,7 @@ func (r *Reader) Read(ctx context.Context, hoverMode bool, points ...walk.Point)
 		}
 		return details.Text
 	}
-	if hoverMode {
-		// Preserve a selection made by dragging the mouse. A precision
-		// touchpad's three-finger Alt gesture must not replace it with the
-		// single word under the pointer.
-		text = readSelected()
-		if text == "" {
-			doubleClick()
-			time.Sleep(90 * time.Millisecond)
-			text = readSelected()
-			if text == "" {
-				return model.Selection{}, errors.New("未能从 Chrome 读取选中的英文内容")
-			}
-		}
-	} else {
-		text = readSelected()
-	}
+	text = readSelected()
 	if text == "" {
 		// A double click selects the word under the pointer in browsers and
 		// most native text controls. Existing manual selections are tried first.

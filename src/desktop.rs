@@ -300,11 +300,11 @@ pub fn run(instance: native::Instance) -> Result<()> {
                 ..
             } => {
                 if window_id == app.main.window.id() {
-                    app.main.window.set_visible(false);
+                    app.close_view(Scope::Main);
                 } else if window_id == app.popup.window.id() {
-                    app.hide_popup();
+                    app.close_view(Scope::Popup);
                 } else if window_id == app.settings.window.id() {
-                    app.settings.window.set_visible(false);
+                    app.close_view(Scope::Settings);
                 }
             }
             Event::MainEventsCleared => {
@@ -617,6 +617,17 @@ impl App {
             }
         }
     }
+    fn close_view(&mut self, scope: Scope) {
+        if scope == Scope::Popup {
+            self.hide_popup();
+        } else {
+            self.view(scope).window.set_visible(false);
+        }
+        let view = self.view_mut(scope);
+        view.pinned = false;
+        view.window.set_always_on_top(false);
+        self.render();
+    }
     fn hide_popup(&mut self) {
         self.popup_visible = false;
         self.popup.window.set_focusable(false);
@@ -670,14 +681,7 @@ impl App {
         });
     }
     fn lookup(&mut self, scope: Scope, mut s: Selection, bypass: bool, mirror: bool) {
-        s.text = s
-            .text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(300)
-            .collect();
+        s.text = selection::clean_query(&s.text);
         if s.text.is_empty() {
             return;
         };
@@ -917,11 +921,7 @@ impl App {
                 }
             }
             "close" => {
-                if scope == Scope::Popup {
-                    self.hide_popup()
-                } else {
-                    self.view(scope).window.set_visible(false)
-                }
+                self.close_view(scope);
             }
             "pin" => {
                 let view = self.view_mut(scope);

@@ -109,10 +109,11 @@ pub fn parse_answer(raw: &str, selection: &Selection) -> anyhow::Result<Answer> 
             contains && !d.part_of_speech.is_empty() && chinese(&d.example_zh),
             "词性或例句不完整，请重试"
         );
-        anyhow::ensure!(
-            !d.example_zh_match.is_empty() && d.example_zh.contains(&d.example_zh_match),
-            "例句对应翻译不完整，请重试"
-        );
+        // Highlighting is optional presentation metadata, not dictionary content.
+        d.example_zh_match = d.example_zh_match.trim().to_string();
+        if !d.example_zh.contains(&d.example_zh_match) {
+            d.example_zh_match.clear();
+        }
         if selection.text.split_whitespace().count() == 1 {
             anyhow::ensure!(!d.phonetic.trim().is_empty(), "单词缺少美式音标，请重试");
         } else {
@@ -128,6 +129,7 @@ pub const INSTRUCTIONS: &str = concat!(
     "learningZh 提供2-3句中文理解、诚实的记忆辅助、用法或搭配，说明变形，不编造词源。",
     "单词提供美式 IPA 音标 phonetic，前后斜线；短语和句子音标为空。词性用 n., v., adj., adv., phr. 等缩写。",
     "exampleEn 必须包含所查原词语、使用同一含义；exampleZh 是该例句的中文翻译。exampleZhMatch 是翻译中对应所查词的最短连续原文。",
+    "例句的标点须符合真实语法和词语用法：保留 No.、U.S. 等缩写的句点、所有格和缩写中的撇号、复合词连字符以及正常句末标点；不要从原文照搬词旁的括号、引号或排版符号，不得出现孤立或不配对的括号。",
     "句子只翻译所选句子，partOfSpeech、exampleEn、exampleZh、exampleZhMatch 为空。",
     "只返回一个 JSON 对象：type, kind, term, partOfSpeech, phonetic, meaningZh, learningZh, exampleZhMatch, exampleEn, exampleZh, suggestions。",
     "除 suggestions 为字符串数组外所有字段均为字符串。正常结果 type=definition、suggestions=[]。",

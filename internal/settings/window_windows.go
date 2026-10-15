@@ -27,7 +27,7 @@ func Edit(owner walk.Form, cfg *Config, exePath string) bool {
 		_ = d.SetIcon(icon)
 		defer icon.Dispose()
 	}
-	d.SetSize(walk.Size{Width: 620, Height: 500})
+	d.SetSize(walk.Size{Width: 680, Height: 740})
 	l := walk.NewVBoxLayout()
 	l.SetMargins(walk.Margins{HNear: 36, VNear: 36, HFar: 36, VFar: 36})
 	l.SetSpacing(12)

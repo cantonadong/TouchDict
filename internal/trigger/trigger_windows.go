@@ -18,6 +18,7 @@ type Listener struct {
 	events             chan<- Event
 	mouseHook, keyHook uintptr
 	enabled            atomic.Bool
+	altEnabled         atomic.Bool
 	last               atomic.Int64
 }
 type keyboardData struct {
@@ -47,45 +48,75 @@ var callNextHookEx = user32.NewProc("CallNextHookEx")
 var getAsyncKeyState = user32.NewProc("GetAsyncKeyState")
 var registerHotKey = user32.NewProc("RegisterHotKey")
 var getMessage = user32.NewProc("GetMessageW")
+var replayKey = user32.NewProc("keybd_event")
+
+const replayMarker = 0x54444354
 
 func New(events chan<- Event) *Listener {
 	l := &Listener{events: events}
 	l.enabled.Store(true)
+	l.altEnabled.Store(true)
 	return l
 }
 func (l *Listener) Start() error {
 	var altStarted time.Time
-	altCandidate := false
+	altPending := false
+	altForwarded := false
+	var altScan uint32
 	keyCB := syscall.NewCallback(func(code int, wparam, lparam uintptr) uintptr {
-		if code >= 0 && l.enabled.Load() {
+		if code >= 0 {
 			data := (*keyboardData)(syscallPointer(lparam))
-			vk := data.VkCode
-			if wparam == wmKeyDown || wparam == wmSysKeyDown {
-				if vk == vkLMenu || vk == vkMenu {
-					if !altCandidate {
-						altStarted = time.Now()
-						altCandidate = true
-					}
-				} else {
-					if altCandidate {
-						altCandidate = false
-					}
+			if data.ExtraInfo == replayMarker {
+				r, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
+				return r
+			}
+			isAlt := data.VkCode == vkLMenu || data.VkCode == vkMenu
+			down := wparam == wmKeyDown || wparam == wmSysKeyDown
+			up := wparam == wmKeyUp || wparam == wmSysKeyUp
+			if isAlt && down && (altPending || (l.enabled.Load() && l.altEnabled.Load() && !altForwarded)) {
+				if !altPending {
 					ctrl, _, _ := getAsyncKeyState.Call(vkControl)
-					alt, _, _ := getAsyncKeyState.Call(vkMenu)
-					if vk == vkD && ctrl&0x8000 != 0 && alt&0x8000 != 0 {
-						l.emit("hotkey")
+					shift, _, _ := getAsyncKeyState.Call(0x10)
+					otherAlt, _, _ := getAsyncKeyState.Call(0xA5)
+					if (ctrl|shift|otherAlt)&0x8000 != 0 {
+						altForwarded = true
+						r, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
+						return r
 					}
+					altStarted, altScan = time.Now(), data.ScanCode
+					altPending = true
 				}
-			} else if (wparam == wmKeyUp || wparam == wmSysKeyUp) && (vk == vkLMenu || vk == vkMenu) {
-				if altCandidate {
-					elapsed := time.Since(altStarted)
-					// Precision touchpads can synthesize an Alt tap with down/up in the
-					// same clock tick. Do not discard these zero-duration gestures.
-					if elapsed <= 900*time.Millisecond {
-						l.emit("alt")
-					}
+				return 1
+			}
+			if altPending && !isAlt && down {
+				// Replay the modifier and this key in order; subsequent keys and
+				// releases pass through normally so Alt shortcuts remain usable.
+				altPending, altForwarded = false, true
+				replayKey.Call(vkLMenu, uintptr(altScan), 0, replayMarker)
+				replayKey.Call(uintptr(data.VkCode), uintptr(data.ScanCode), uintptr(data.Flags&1), replayMarker)
+				ctrl, _, _ := getAsyncKeyState.Call(vkControl)
+				if data.VkCode == vkD && ctrl&0x8000 != 0 && l.enabled.Load() {
+					l.emit("hotkey")
 				}
-				altCandidate = false
+				return 1
+			}
+			if isAlt && up && altPending {
+				altPending = false
+				if l.enabled.Load() && l.altEnabled.Load() && time.Since(altStarted) <= 900*time.Millisecond {
+					l.emit("alt")
+				}
+				return 1
+			}
+			if isAlt && up {
+				altForwarded = false
+			}
+		}
+		if code >= 0 && l.enabled.Load() && (wparam == wmKeyDown || wparam == wmSysKeyDown) {
+			data := (*keyboardData)(syscallPointer(lparam))
+			ctrl, _, _ := getAsyncKeyState.Call(vkControl)
+			alt, _, _ := getAsyncKeyState.Call(vkMenu)
+			if data.VkCode == vkD && ctrl&0x8000 != 0 && (alt&0x8000 != 0 || altForwarded) {
+				l.emit("hotkey")
 			}
 		}
 		r, _, _ := callNextHookEx.Call(0, uintptr(code), wparam, lparam)
@@ -136,7 +167,8 @@ func (l *Listener) emit(source string) {
 	default:
 	}
 }
-func (l *Listener) SetEnabled(v bool) { l.enabled.Store(v) }
+func (l *Listener) SetEnabled(v bool)    { l.enabled.Store(v) }
+func (l *Listener) SetAltEnabled(v bool) { l.altEnabled.Store(v) }
 func (l *Listener) Close() {
 	if l.mouseHook != 0 {
 		unhookWindowsHookEx.Call(l.mouseHook)

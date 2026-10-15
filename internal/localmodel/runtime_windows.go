@@ -104,7 +104,7 @@ func (r *Runtime) start(ctx context.Context, modelPath string) (*serverProcess, 
 		return nil, err
 	}
 	command := exec.Command(exe, "--model", modelPath, "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--api-key", token,
-		"--ctx-size", "4096", "--parallel", "1", "--n-gpu-layers", "0", "--jinja", "--reasoning", "off", "--no-webui")
+		"--ctx-size", "4096", "--parallel", "1", "--n-gpu-layers", "0", "--jinja", "--skip-chat-parsing", "--reasoning", "off", "--no-webui")
 	command.Dir = r.directory
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	logDir, err := os.UserCacheDir()

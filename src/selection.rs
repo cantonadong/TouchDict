@@ -44,11 +44,72 @@ pub fn capture(source: &str, point: Point) -> Result<Selection> {
 }
 pub fn clean_text(text: &str) -> String {
     text.chars()
-        .filter(|c| !matches!(c, '\u{fffc}' | '\u{fffd}' | '\u{200b}' | '\u{feff}') && (!c.is_control() || c.is_whitespace()))
+        .filter(|c| {
+            !matches!(c, '\u{fffc}' | '\u{fffd}' | '\u{200b}' | '\u{feff}')
+                && (!c.is_control() || c.is_whitespace())
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+// Clean the lookup term without changing punctuation in its source sentence.
+pub fn clean_query(text: &str) -> String {
+    let text = clean_text(text);
+    let mut value = text.trim().to_string();
+    if value.starts_with('\'') && value.ends_with('\'') && value.len() > 1 {
+        value = value[1..value.len() - 1].trim().to_string();
+    }
+    loop {
+        let previous = value.clone();
+        value = value
+            .trim_start_matches(|c: char| {
+                c.is_whitespace() || "([{（［【\"“”‘’'`,;:，；：".contains(c)
+            })
+            .to_string();
+        value = value
+            .trim_end_matches(|c: char| c.is_whitespace() || ",;:，；：\"“”‘’".contains(c))
+            .to_string();
+        // Discard dangling brackets, retaining balanced parentheses within phrases.
+        if let Some(last) = value.chars().last() {
+            let pair = match last {
+                ')' => Some(('(', ')')),
+                '）' => Some(('（', '）')),
+                ']' => Some(('[', ']')),
+                '］' => Some(('［', '］')),
+                '】' => Some(('【', '】')),
+                '}' => Some(('{', '}')),
+                '(' | '（' | '[' | '［' | '【' | '{' => Some((last, last)),
+                _ => None,
+            };
+            if let Some((open, close)) = pair {
+                if open == close || value.matches(close).count() > value.matches(open).count() {
+                    value.pop();
+                }
+            }
+        }
+        if value == previous {
+            break;
+        }
+    }
+    let words = value.split_whitespace().collect::<Vec<_>>();
+    if words.len() == 1 {
+        value = value
+            .trim_end_matches(['!', '?', '！', '？', '。', ','])
+            .to_string();
+        let stem = value.trim_end_matches('.');
+        let abbreviation = [
+            "no", "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e",
+            "fig", "vol", "inc", "ltd", "approx",
+        ]
+        .contains(&stem.to_ascii_lowercase().as_str())
+            || stem.contains('.')
+            || stem.chars().count() == 1;
+        if !abbreviation {
+            value = stem.to_string();
+        }
+    }
+    value.trim().chars().take(300).collect()
 }
 pub fn capture_in_process(source: &str, point: Point) -> Result<Selection> {
     unsafe {
@@ -88,14 +149,7 @@ pub fn capture_in_process(source: &str, point: Point) -> Result<Selection> {
         }
     };
     selected.context = clean_text(&selected.context);
-    selected.text = selected
-        .text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(300)
-        .collect();
+    selected.text = clean_query(&selected.text);
     selected.source = source.into();
     anyhow::ensure!(
         selected.text.chars().any(|c| c.is_ascii_alphabetic()),
@@ -408,11 +462,7 @@ fn ocr(point: Point, image: Image) -> Result<Selection> {
             };
             let d = dx * dx + dy * dy;
             if d < distance && dx <= 12.0 && dy <= 8.0 {
-                let text = word
-                    .Text()?
-                    .to_string()
-                    .trim_matches(|c: char| !c.is_ascii_alphabetic() && c != '\'' && c != '-')
-                    .to_string();
+                let text = clean_query(&word.Text()?.to_string());
                 if text.chars().any(|c| c.is_ascii_alphabetic()) {
                     distance = d;
                     chosen = Some(Selection {

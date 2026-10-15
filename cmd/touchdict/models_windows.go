@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"github.com/lxn/walk"
 	"path/filepath"
 	"touchdict/internal/localmodel"
@@ -34,7 +35,60 @@ func addModelMenu(notify *walk.NotifyIcon, cfg *settings.Config, owner walk.Form
 			return nil, err
 		}
 	}
+	speed := walk.NewAction()
+	speed.SetText("测试全部在线模型查询速度")
+	if err := notify.ContextMenu().Actions().Add(speed); err != nil {
+		return nil, err
+	}
+	speedResult := walk.NewAction()
+	speedResult.SetEnabled(false)
+	speedResult.SetText("查询耗时：尚未测试")
+	if err := notify.ContextMenu().Actions().Add(speedResult); err != nil {
+		return nil, err
+	}
+	speedCtx, cancelSpeed := context.WithCancel(context.Background())
+	owner.Disposing().Attach(func() { cancelSpeed() })
 	var refresh func()
+	speed.Triggered().Attach(func() {
+		names := settings.OnlineModels()
+		name := settings.NormalizeGeminiModel(cfg.Model)
+		found := false
+		for _, candidate := range names {
+			if candidate == name {
+				found = true
+			}
+		}
+		if !found && name != "" {
+			names = append(names, name)
+		}
+		keys := cfg.ModelKeys(names)
+		speed.SetEnabled(false)
+		speedResult.SetText("正在测试全部在线模型…")
+		go func() {
+			err := settings.MeasureAllOnlineModels(speedCtx, keys, names, func(status string) {
+				if speedCtx.Err() != nil {
+					return
+				}
+				owner.Synchronize(func() {
+					if speedCtx.Err() == nil {
+						speedResult.SetText(status)
+					}
+				})
+			})
+			if speedCtx.Err() != nil {
+				return
+			}
+			owner.Synchronize(func() {
+				if speedCtx.Err() != nil {
+					return
+				}
+				speed.SetEnabled(true)
+				if err != nil {
+					speedResult.SetText(err.Error())
+				}
+			})
+		}()
+	})
 	selectModel := func(provider, name string) {
 		updated := *cfg
 		updated.ModelProvider = provider
@@ -53,14 +107,15 @@ func addModelMenu(notify *walk.NotifyIcon, cfg *settings.Config, owner walk.Form
 		refresh()
 	}
 	refresh = func() {
+		cfg.Model = settings.NormalizeGeminiModel(cfg.Model)
 		online.Actions().Clear()
 		local.Actions().Clear()
-		label := "在线 " + cfg.Model
+		label := "在线 " + settings.OnlineModelLabel(cfg.Model)
 		if cfg.ModelProvider == "local" {
 			label = "本地 " + filepath.Base(cfg.LocalModel)
 		}
 		current.SetText("当前模型：" + label)
-		names := append([]string(nil), settings.GeminiModels...)
+		names := settings.OnlineModels()
 		found := false
 		for _, name := range names {
 			if name == cfg.Model {
@@ -73,7 +128,7 @@ func addModelMenu(notify *walk.NotifyIcon, cfg *settings.Config, owner walk.Form
 		for _, name := range names {
 			name := name
 			action := walk.NewAction()
-			action.SetText(name)
+			action.SetText(settings.OnlineModelLabel(name))
 			action.SetCheckable(true)
 			action.SetChecked(cfg.ModelProvider != "local" && cfg.Model == name)
 			action.Triggered().Attach(func() { selectModel("online", name) })
@@ -97,5 +152,16 @@ func addModelMenu(notify *walk.NotifyIcon, cfg *settings.Config, owner walk.Form
 		}
 	}
 	refresh()
+	unsubscribe := settings.SubscribeModelSpeeds(func() {
+		if speedCtx.Err() != nil {
+			return
+		}
+		owner.Synchronize(func() {
+			if speedCtx.Err() == nil {
+				refresh()
+			}
+		})
+	})
+	owner.Disposing().Attach(func() { unsubscribe() })
 	return refresh, nil
 }

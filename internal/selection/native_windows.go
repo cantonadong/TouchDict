@@ -163,7 +163,7 @@ func captureNative(expected string, x, y int32) contextDetails {
 		pattern := element.object(14, 10014, uintptr(unsafe.Pointer(&uiaTextIID)))
 		if pattern != nil {
 			providers++
-			matched := capturePattern(pattern, expected, packedPoint, &details)
+			matched := capturePattern(pattern, expected, packedPoint, &details, os.Getenv("TOUCHDICT_HOVER_MODE") == "1")
 			pattern.release()
 			if matched {
 				return details
@@ -197,7 +197,7 @@ func captureNative(expected string, x, y int32) contextDetails {
 	return details
 }
 
-func capturePattern(pattern *uiaObject, expected string, packedPoint uintptr, details *contextDetails) bool {
+func capturePattern(pattern *uiaObject, expected string, packedPoint uintptr, details *contextDetails, hover bool) bool {
 	var ranges []*uiaObject
 	defer func() {
 		for _, r := range ranges {
@@ -227,9 +227,26 @@ func capturePattern(pattern *uiaObject, expected string, packedPoint uintptr, de
 		}
 		array.release()
 	}
-	// With no clipboard text, accept only an actual nonempty selection.
-	// Do not infer a query from the node name or the document contents.
 	if expected == "" {
+		if hover {
+			if word := pattern.object(3, packedPoint); word != nil {
+				defer word.release()
+				if uiaOK(word.call(6, 2)) { // TextUnit_Word; does not select or click.
+					text := strings.Trim(normalize(word.text(12, 4096)), ".,!?;:\"()[]{}“”")
+					bounds := rangeBounds(word)
+					x, y := int(int32(uint32(packedPoint))), int(int32(uint32(uint64(packedPoint)>>32)))
+					// RangeFromPoint returns the nearest range even in empty space.
+					// Accept only a word whose bounds actually touch the pointer.
+					if bounds != nil && x >= bounds.Left-3 && x <= bounds.Right+3 && y >= bounds.Top-3 && y <= bounds.Bottom+3 && hasLatin(text) && len(strings.Fields(text)) == 1 && len([]rune(text)) <= 300 {
+						details.Text, details.SelectionBounds = text, *bounds
+						captureRange(word, normalize(word.text(12, 4096)), details)
+						details.Diagnostic = "native UIA: word under pointer"
+						return true
+					}
+				}
+			}
+		}
+		// Clipboard fallback continues to accept only actual selections.
 		return false
 	}
 	if r := pattern.object(3, packedPoint); r != nil {

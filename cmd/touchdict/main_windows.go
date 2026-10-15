@@ -21,6 +21,7 @@ import (
 	"touchdict/internal/logging"
 	"touchdict/internal/mainwindow"
 	"touchdict/internal/model"
+	"touchdict/internal/online"
 	"touchdict/internal/popup"
 	"touchdict/internal/preview"
 	"touchdict/internal/query"
@@ -67,11 +68,14 @@ func main() {
 	} else {
 		defer closer.Close()
 	}
+	log.SetOutput(logger.Writer())
+	log.SetFlags(log.Ldate | log.Ltime | log.LUTC)
 	if err := gemini.ConfigureCache(exeDir); err != nil {
 		logger.Printf("cache init failed: %v", err)
 	}
 	events := make(chan trigger.Event, 2)
 	listener := trigger.New(events)
+	listener.SetAltEnabled(cfg.AltEnabled)
 	defer listener.Close()
 	reader := selection.New()
 	reader.Diagnostics = func(message string) { logger.Print(message) }
@@ -87,7 +91,7 @@ func main() {
 		if cfg.ModelProvider == "local" {
 			return localmodel.New(localRuntime, cfg.LocalModel)
 		}
-		return gemini.New(cfg.APIKey, cfg.Model)
+		return online.New(cfg.KeyForModel(cfg.Model), cfg.Model)
 	}, 20*time.Second)
 	if err := settings.SyncStartup(exe, cfg.StartupEnabled); err != nil {
 		logger.Printf("startup sync failed")
@@ -110,8 +114,9 @@ func main() {
 	}
 	editSettings := func() {
 		old := cfg
-		if settings.Edit(nil, &cfg, exe) {
-			if old.ModelProvider != cfg.ModelProvider || old.Model != cfg.Model || old.LocalModel != cfg.LocalModel || old.APIKey != cfg.APIKey {
+		if settings.Edit(nil, &cfg, exe) || old.Model != cfg.Model || old.ModelProvider != cfg.ModelProvider {
+			listener.SetAltEnabled(cfg.AltEnabled)
+			if old.ModelProvider != cfg.ModelProvider || old.Model != cfg.Model || old.LocalModel != cfg.LocalModel || old.APIKey != cfg.APIKey || old.GroqAPIKey != cfg.GroqAPIKey || old.OpenRouterAPIKey != cfg.OpenRouterAPIKey {
 				onModelChanged()
 			}
 			logger.Print("settings updated")
@@ -135,8 +140,7 @@ func main() {
 		}
 	}, Lookup: func(text string) {
 		speaker.Stop()
-		current.Text = text
-		current.Multiword = len(strings.Fields(text)) > 1
+		current = model.Selection{Text: text, Multiword: len(strings.Fields(text)) > 1}
 		lookupPopup(queryService, win, &cfg, speaker, logger, current)
 	}, Retry: retry, Hidden: speaker.Stop, Settings: editSettings})
 	if err != nil {

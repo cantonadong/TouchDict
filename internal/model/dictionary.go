@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -8,7 +9,82 @@ import (
 
 // Increment when dictionary semantics change. Old results remain available in
 // history, but must not answer new queries using an obsolete prompt.
-const DictionaryPromptVersion = 4
+const DictionaryPromptVersion = 6
+
+const DictionaryTemperature = 0.2
+const DictionaryMaxOutputTokens = 2048
+
+// All dictionary providers use this exact instruction text. Transport-specific
+// templates and output grammars must not change the dictionary task.
+const DictionarySystemInstructions = ContextualDictionaryInstructions + "\n" + LearningInstructions + "\nUse American English. Return type=definition for valid selections. If likely misspelled, return type=suggestions with up to five likely English corrections; all definition fields must be empty. For kind=term, partOfSpeech is an appropriate abbreviation such as n., v., adj., adv., phr., idiom, nc or nu, and exampleEn must contain the exact selected term. For kind=sentence, return empty partOfSpeech, exampleEn and exampleZh. Preserve selection exactly in term.\n" + PhoneticInstructions + `
+The JSON object has these fields: type, kind, term, partOfSpeech, phonetic, meaningZh, learningZh, exampleZhMatch, exampleEn, exampleZh, suggestions. All fields except suggestions are strings; suggestions is an array of strings, empty for a definition. meaningZh, learningZh and exampleZh must be Chinese, not English explanations. Do not copy illustrative values into the answer.`
+
+func DictionarySelectionPrompt(s Selection) string {
+	limit := func(value string, count int) string {
+		runes := []rune(value)
+		if len(runes) > count {
+			value = string(runes[:count])
+		}
+		return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(value)
+	}
+	return "<selection>" + limit(s.Text, 300) + "</selection>\n<context>" + limit(s.Context, 1200) + "</context>"
+}
+
+// Shared acceptance rules prevent local providers from displaying reduced
+// answers that the cloud dictionary would reject.
+func ValidateDictionaryDefinition(s Selection, d Definition) error {
+	if !DefinitionMatchesSelection(s, d) {
+		return errors.New("内容与所查词不符，或例句没有使用所查原词")
+	}
+	if d.Term == "" || d.MeaningZH == "" {
+		return errors.New("term 或 meaningZh 为空")
+	}
+	if strings.TrimSpace(d.LearningZH) == "" {
+		return errors.New("learningZh 为空，必须提供中文理解与用法说明")
+	}
+	if !DefinitionHasLearning(d) {
+		return errors.New("exampleZhMatch 必须是 exampleZh 中对应所查词的连续原文片段，不能使用另一种翻译")
+	}
+	if !DefinitionHasPhonetic(s, d) {
+		return errors.New("phonetic 为空，单词必须提供美式音标")
+	}
+	hasChinese := func(value string) bool {
+		for _, r := range value {
+			if unicode.Is(unicode.Han, r) {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasChinese(d.MeaningZH) || !hasChinese(d.LearningZH) {
+		return errors.New("释义和理解用法必须使用中文")
+	}
+	if d.Kind == "sentence" {
+		if d.PartOfSpeech != "" || d.ExampleEN != "" || d.ExampleZH != "" || d.ExampleZHMatch != "" {
+			return errors.New("句子结果的词性和例句字段必须留空")
+		}
+	} else if d.PartOfSpeech == "" || d.ExampleEN == "" || !hasChinese(d.ExampleZH) {
+		return errors.New("词性、英文例句或中文翻译不完整")
+	}
+	return nil
+}
+
+const PhoneticInstructions = `phonetic must be the American English IPA pronunciation enclosed in slashes, e.g. /həˈloʊ/, for a single English word only. Use the pronunciation of the exact selected form and sense, including inflections. For phrases, sentences or suggestions, phonetic must be an empty string.`
+
+func NormalizePhonetic(selection Selection, d *Definition) {
+	if len(strings.Fields(selection.Text)) != 1 || d.Kind != "term" {
+		d.Phonetic = ""
+		return
+	}
+	d.Phonetic = strings.TrimSpace(d.Phonetic)
+	if runes := []rune(d.Phonetic); len(runes) > 120 {
+		d.Phonetic = string(runes[:120])
+	}
+}
+
+func DefinitionHasPhonetic(selection Selection, d Definition) bool {
+	return len(strings.Fields(selection.Text)) != 1 || d.Kind != "term" || strings.TrimSpace(d.Phonetic) != ""
+}
 
 // Shared by cloud and local models so the selected term remains the subject
 // of the definition even when context contains several other English terms.

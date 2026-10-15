@@ -28,11 +28,9 @@ RPD 在 **美国太平洋时间零点** 重置，不是从第一条请求起滚�
 | 设置与托盘中的模型 ID | 免费输入价格 | 免费输出价格 | 免费 RPM / TPM / RPD | TouchDict 使用说明 |
 |---|---|---|---|---|
 | `gemini-3.1-flash-lite` | 0 | 0 | 查看项目后台 | 当前默认；本机同样的查词请求已成功返回 |
-| `gemini-3.5-flash-lite` | 0 | 0 | 查看项目后台 | 另一款 Flash-Lite，作为可切换选项 |
 | `gemini-3.8-flash` | 0 | 0 | 查看项目后台 | Flash 系列 |
 | `gemini-3.7-flash` | 0 | 0 | 查看项目后台 | Flash 系列 |
 | `gemini-3.6-flash` | 0 | 0 | 查看项目后台 | Flash 系列 |
-| `gemini-3.5-flash` | 0 | 0 | 查看项目后台 | Flash 系列 |
 | `gemini-3-flash-preview` | 0 | 0 | 查看项目后台 | 预览版本；服务和限额可能调整 |
 | `gemini-2.5-flash-lite` | 0 | 0 | 查看项目后台 | 旧系列，存在访问资格限制 |
 | `gemini-2.5-flash` | 0 | 0 | 查看项目后台 | 旧系列，存在访问资格限制 |

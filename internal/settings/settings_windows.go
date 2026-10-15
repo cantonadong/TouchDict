@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"touchdict/internal/chatgpt"
 	"unsafe"
 )
 
 type Config struct {
 	APIKey           string `json:"-"`
+	GroqAPIKey       string `json:"-"`
+	OpenRouterAPIKey string `json:"-"`
 	Model            string `json:"model"`
 	ModelProvider    string `json:"modelProvider"`
 	LocalModelDir    string `json:"localModelDir"`
@@ -43,8 +46,10 @@ type diskConfig struct {
 	ContentFontSize *int   `json:"resultContentFontSize,omitempty"`
 	// Legacy mainWindowHeight used virtualized coordinates; start at the
 	// corrected 1200-screen-pixel default until a new preference is saved.
-	MainWindowHeight *int   `json:"mainWindowHeightPixels,omitempty"`
-	ProtectedKey     []byte `json:"protectedKey,omitempty"`
+	MainWindowHeight       *int   `json:"mainWindowHeightPixels,omitempty"`
+	ProtectedKey           []byte `json:"protectedKey,omitempty"`
+	ProtectedGroqKey       []byte `json:"protectedGroqKey,omitempty"`
+	ProtectedOpenRouterKey []byte `json:"protectedOpenRouterKey,omitempty"`
 }
 
 type dataBlob struct {
@@ -71,6 +76,10 @@ func Load(exeDir string) (Config, error) {
 		return cfg, err
 	}
 	cfg.configDir = filepath.Join(base, "TouchDict")
+	// An unreadable subscription record must not prevent the app from starting.
+	if err := configureSubscription(cfg.configDir); err != nil {
+		chatgpt.Default.Configure(chatgpt.Saved{}, subscriptionPersistence(cfg.configDir))
+	}
 	b, err := os.ReadFile(filepath.Join(cfg.configDir, "settings.json"))
 	if err == nil {
 		var d diskConfig
@@ -83,7 +92,7 @@ func Load(exeDir string) (Config, error) {
 			}
 			cfg.LocalModel = d.LocalModel
 			if d.Model != "" {
-				cfg.Model = d.Model
+				cfg.Model = NormalizeGeminiModel(d.Model)
 			}
 			if cfg.Model == "gemini-flash-lite-latest" {
 				cfg.Model = "gemini-3.1-flash-lite"
@@ -109,6 +118,12 @@ func Load(exeDir string) (Config, error) {
 			}
 			if len(d.ProtectedKey) > 0 {
 				cfg.APIKey, _ = unprotect(d.ProtectedKey)
+			}
+			if len(d.ProtectedGroqKey) > 0 {
+				cfg.GroqAPIKey, _ = unprotect(d.ProtectedGroqKey)
+			}
+			if len(d.ProtectedOpenRouterKey) > 0 {
+				cfg.OpenRouterAPIKey, _ = unprotect(d.ProtectedOpenRouterKey)
 			}
 		}
 	}
@@ -137,6 +152,14 @@ func (c Config) Save() error {
 	if err != nil {
 		return err
 	}
+	groqKey, err := protect(c.GroqAPIKey)
+	if err != nil {
+		return err
+	}
+	openRouterKey, err := protect(c.OpenRouterAPIKey)
+	if err != nil {
+		return err
+	}
 	altEnabled := c.AltEnabled
 	startupEnabled := c.StartupEnabled
 	fontScale := c.ResultFontScale
@@ -144,6 +167,7 @@ func (c Config) Save() error {
 	height := c.MainWindowHeight
 	d := diskConfig{Model: c.Model, HotkeyEnabled: c.HotkeyEnabled, MiddleEnabled: c.MiddleEnabled, AltEnabled: &altEnabled, AutoSpeak: c.AutoSpeak, StartupEnabled: &startupEnabled, ResultFontScale: &fontScale, TermFontSize: &termSize, ContentFontSize: &contentSize, MainWindowHeight: &height, ProtectedKey: p}
 	d.ModelProvider, d.LocalModelDir, d.LocalModel = c.ModelProvider, c.LocalModelDir, c.LocalModel
+	d.ProtectedGroqKey, d.ProtectedOpenRouterKey = groqKey, openRouterKey
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err
